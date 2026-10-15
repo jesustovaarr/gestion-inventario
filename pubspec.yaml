@@ -19,7 +19,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 version: 1.0.0+1
 
 environment:
-  sdk: ^3.13.2
+  sdk: ^3.13.1
 
 # Dependencies specify other packages that your package needs in order to work.
 # To automatically upgrade your package dependencies to the latest versions
@@ -39,6 +39,7 @@ dependencies:
   path: ^1.9.1
   table_calendar: ^3.3.0
   badges: ^4.0.1
+  flutter_slidable: ^4.0.3
 
 dev_dependencies:
   flutter_test:
