@@ -23,7 +23,17 @@ class AppBottomNavigation extends StatelessWidget {
       TextStyle(fontSize: 10, fontWeight: FontWeight.w500),
     ),
     onDestinationSelected:
-        (_0) {},
+        onDestinationSelected ??
+        (index) {
+          final navigator = Navigator.of(context, rootNavigator: true);
+          if (index == 0) {
+            navigator.popUntil((route) => route.isFirst);
+            return;
+          }
+          final name = const ['/', '/calendar', '/stores', '/cart'][index];
+          if (ModalRoute.of(context)?.settings.name == name) return;
+          navigator.pushNamedAndRemoveUntil(name, (route) => route.isFirst);
+        },
     destinations: const [
       NavigationDestination(
         icon: Icon(Icons.home_outlined, size: 22),
