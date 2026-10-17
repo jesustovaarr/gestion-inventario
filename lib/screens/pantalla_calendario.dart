@@ -8,9 +8,12 @@ import 'package:table_calendar/table_calendar.dart';
 
 import '../components/tema_alacena.dart';
 import '../presentation/datos_calendario_demostracion.dart';
+import '../widgets/miniatura_producto.dart';
+import '../models/lote_model.dart';
+import '../database/daos/lote_dao.dart';
 import 'pantalla_alertas_dia.dart';
 
-/// Calendario navegable con alertas de muestra de mayo de 2024.
+// Calendario con alertas reales de caducidad por lote
 class CalendarScreen extends StatefulWidget {
   const CalendarScreen({super.key});
 
@@ -19,19 +22,92 @@ class CalendarScreen extends StatefulWidget {
 }
 
 class _CalendarScreenState extends State<CalendarScreen> {
-  DateTime _selectedDay = DateTime(2024, 5, 13);
-  DateTime _focusedDay = DateTime(2024, 5, 13);
+  final _loteDao = LoteDao();
+  late DateTime _selectedDay;
+  late DateTime _focusedDay;
+  Map<String, List<CalendarAlertPreview>> _alertasPorFecha = {};
 
-  void _openDay(DateTime selected, DateTime focused) {
+  @override
+  void initState() {
+    super.initState();
+    final hoy = DateTime.now();
+    _selectedDay = hoy;
+    _focusedDay = hoy;
+    _cargarAlertasDesdeBD();
+  }
+
+  String _formatoIso(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  Future<void> _cargarAlertasDesdeBD() async {
+    try {
+      final lotes = await _loteDao.obtenerTodosLotesActivos();
+      final Map<String, List<CalendarAlertPreview>> mapa = {};
+
+      for (final lote in lotes) {
+        final alert = _loteToAlert(lote);
+        final fecha = lote.fechaCaducidad;
+        mapa.putIfAbsent(fecha, () => []).add(alert);
+      }
+
+      if (mounted) {
+        setState(() {
+          _alertasPorFecha = mapa;
+        });
+      }
+    } catch (_) {}
+  }
+
+  CalendarAlertPreview _loteToAlert(Lote lote) {
+    CalendarPreviewStatus st;
+    if (lote.estaCaducado) {
+      st = CalendarPreviewStatus.expired;
+    } else if (lote.porCaducar) {
+      st = CalendarPreviewStatus.expiring;
+    } else {
+      st = CalendarPreviewStatus.lowStock;
+    }
+
+    final cantStr = lote.cantidad.truncateToDouble() == lote.cantidad
+        ? '${lote.cantidad.toInt()}'
+        : lote.cantidad.toStringAsFixed(1);
+
+    return CalendarAlertPreview(
+      lote.productoNombre ?? 'Producto',
+      'Alacena · Inventario',
+      '$cantStr ${lote.unidad ?? "pza"}',
+      st,
+      ProductThumbnailKind.placeholder,
+      lotCode: lote.id != null ? 'Lote #${lote.id}' : 'Lote',
+      loteId: lote.id,
+      productoId: lote.productoId,
+      cantidad: lote.cantidad,
+      unidad: lote.unidad ?? 'pza',
+    );
+  }
+
+  List<CalendarAlertPreview> _alertasParaDia(DateTime day) {
+    final iso = _formatoIso(day);
+    if (_alertasPorFecha.containsKey(iso)) {
+      return _alertasPorFecha[iso]!;
+    }
+    return const [];
+  }
+
+  Future<void> _openDay(DateTime selected, DateTime focused) async {
     setState(() {
       _selectedDay = selected;
       _focusedDay = focused;
     });
-    showDialog<void>(
+    final alertasDelDia = _alertasParaDia(selected);
+    await showDialog<void>(
       context: context,
       useSafeArea: false,
-      builder: (_) => Dialog.fullscreen(child: _DayAlertsModal(day: selected)),
+      builder: (_) => Dialog.fullscreen(
+        child: DayAlertsScreen(day: selected, alerts: alertasDelDia),
+      ),
     );
+    _cargarAlertasDesdeBD();
   }
 
   void _moveMonth(int offset) {
@@ -43,7 +119,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final alerts = calendarPreviewAlerts(_selectedDay);
+    final alerts = _alertasParaDia(_selectedDay);
     return ColoredBox(
       color: PantryColors.greenLight,
       child: Center(
@@ -56,19 +132,12 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 slivers: [
                   SliverAppBar(
                     toolbarHeight: 68,
-                    leadingWidth: 40,
                     pinned: true,
-                    titleSpacing: 0,
+                    automaticallyImplyLeading: false,
+                    titleSpacing: 20,
                     title: const AppSectionHeading(
                       section: AppSection.calendar,
                     ),
-                    actions: [
-                      IconButton(
-                        onPressed: () {},
-                        tooltip: 'Buscar',
-                        icon: const Icon(Icons.search_rounded, size: 21),
-                      ),
-                    ],
                   ),
                   SliverPadding(
                     padding: const EdgeInsets.fromLTRB(20, 10, 20, 12),
@@ -173,7 +242,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                           availableGestures: AvailableGestures.horizontalSwipe,
                           selectedDayPredicate: (day) =>
                               isSameDay(day, _selectedDay),
-                          eventLoader: calendarPreviewAlerts,
+                          eventLoader: _alertasParaDia,
                           onDaySelected: _openDay,
                           onPageChanged: (day) =>
                               setState(() => _focusedDay = day),
@@ -518,13 +587,4 @@ class _NoDayAlerts extends StatelessWidget {
       ],
     ),
   );
-}
-
-class _DayAlertsModal extends StatelessWidget {
-  const _DayAlertsModal({required this.day});
-  final DateTime day;
-
-  @override
-  Widget build(BuildContext context) =>
-      DayAlertsScreen(day: day, alerts: calendarPreviewAlerts(day));
 }
