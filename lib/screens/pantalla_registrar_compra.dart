@@ -52,11 +52,6 @@ class _RegisterPurchaseScreenState extends State<RegisterPurchaseScreen> {
                           size: 20,
                         ),
                       ),
-                      IconButton(
-                        onPressed: () {},
-                        tooltip: 'Más opciones',
-                        icon: const Icon(Icons.more_vert_rounded, size: 20),
-                      ),
                     ],
                   ),
                   SliverPadding(

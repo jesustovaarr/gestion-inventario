@@ -60,33 +60,6 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
                     title: const AppSectionHeading(
                       section: AppSection.dayAlerts,
                     ),
-                    actions: [
-                      IconButton(
-                        onPressed: () {},
-                        tooltip: 'Buscar productos del día',
-                        icon: const Icon(Icons.search_rounded, size: 20),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(right: 12),
-                        child: IconButton.filled(
-                          onPressed: () {},
-                          tooltip: 'Perfil',
-                          style: IconButton.styleFrom(
-                            backgroundColor: PantryColors.green,
-                          ),
-                          icon: const Icon(
-                            Icons.person_outline_rounded,
-                            size: 17,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-                    sliver: SliverToBoxAdapter(
-                      child: Row(
-                        children: [
                           IconButton(
                             onPressed: _close,
                             tooltip: 'Cerrar productos del día',
@@ -262,80 +235,6 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
                     ),
                   if (alerts.isNotEmpty && !_clearView) ...[
                     SliverPadding(
-                      padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
-                      sliver: SliverToBoxAdapter(
-                        child: Container(
-                          padding: const EdgeInsets.all(15),
-                          decoration: BoxDecoration(
-                            color: PantryColors.greenLight,
-                            borderRadius: BorderRadius.circular(15),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              const Row(
-                                children: [
-                                  Icon(
-                                    Icons.auto_awesome_outlined,
-                                    size: 19,
-                                    color: PantryColors.green,
-                                  ),
-                                  SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      'Acción inteligente del día',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ),
-                                  _DayBadge('1 TAP'),
-                                ],
-                              ),
-                              const SizedBox(height: 10),
-                              Text(
-                                'Agrega los ${alerts.length} productos comprometidos a tu carrito de reposición para preparar tu próxima visita al súper.',
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: PantryColors.muted,
-                                  height: 1.5,
-                                ),
-                              ),
-                              const SizedBox(height: 14),
-                              FilledButton.icon(
-                                onPressed: () {},
-                                icon: const Icon(
-                                  Icons.add_shopping_cart_outlined,
-                                  size: 17,
-                                ),
-                                label: Text(
-                                  'Agregar los ${alerts.length} productos al carrito',
-                                  textAlign: TextAlign.center,
-                                  style: const TextStyle(fontSize: 11),
-                                ),
-                                style: FilledButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 13,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    SliverPadding(
-                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-                      sliver: SliverToBoxAdapter(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
                           ),
                           decoration: BoxDecoration(
                             color: const Color(0xFFE8F2EA),
