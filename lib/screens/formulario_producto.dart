@@ -1,14 +1,19 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../widgets/encabezado_seccion.dart';
-
 import '../widgets/barra_navegacion_inferior.dart';
-
 import '../components/tema_alacena.dart';
 import '../presentation/datos_alacena_demostracion.dart';
 import '../widgets/miniatura_producto.dart';
+import '../models/producto_model.dart';
+import '../models/lote_model.dart';
+import '../models/categoria_model.dart';
+import '../database/daos/producto_dao.dart';
+import '../database/daos/lote_dao.dart';
+import '../database/daos/categoria_dao.dart';
 
-/// Alta visual: los valores solo viven en la pantalla, sin persistencia.
+// Formulario para dar de alta o editar productos
 class ProductFormScreen extends StatefulWidget {
   const ProductFormScreen({super.key, this.product});
   final PantryProductPreview? product;
@@ -19,22 +24,256 @@ class ProductFormScreen extends StatefulWidget {
 }
 
 class _ProductFormScreenState extends State<ProductFormScreen> {
+  final _productoDao = ProductoDao();
+  final _loteDao = LoteDao();
+  final _categoriaDao = CategoriaDao();
+
+  late TextEditingController _nameController;
+  late TextEditingController _dateController;
+  late TextEditingController _minimumController;
+  late TextEditingController _quantityController;
+
   String _name = '';
   String _category = 'Lácteos';
   String _unit = 'pza';
   String _zone = 'Nevera';
   String _time = '09:00 AM';
-  int _minimum = 0;
-  int _quantity = 3;
+  double _minimum = 2.0;
+  double _quantity = 1.0;
   bool _reminder = true;
+  DateTime _fechaCaducidad = DateTime.now().add(const Duration(days: 7));
+  bool _guardando = false;
+  List<Categoria> _categoriasBD = [];
+
+  String _formatearNumero(double n) {
+    if (n == n.roundToDouble()) {
+      return n.toInt().toString();
+    }
+    return n.toString();
+  }
 
   @override
   void initState() {
     super.initState();
     _name = widget.product?.name ?? '';
     _category = widget.product?.category ?? 'Lácteos';
-    _unit = widget.product?.unit ?? 'pza';
-    _minimum = widget.product?.minimumStock ?? 0;
+    _unit = widget.product != null
+        ? (widget.product!.unit.toLowerCase() == 'lt' ? 'L' : widget.product!.unit)
+        : 'pza';
+    _minimum = widget.product?.minimumStock.toDouble() ?? 2.0;
+    _quantity = 1.0;
+
+    _nameController = TextEditingController(text: _name);
+    _minimumController = TextEditingController(text: _formatearNumero(_minimum));
+    _quantityController = TextEditingController(text: _formatearNumero(_quantity));
+    _dateController = TextEditingController(
+      text:
+          '${_fechaCaducidad.day.toString().padLeft(2, '0')}/${_fechaCaducidad.month.toString().padLeft(2, '0')}/${_fechaCaducidad.year}',
+    );
+    _cargarCategorias();
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _dateController.dispose();
+    _minimumController.dispose();
+    _quantityController.dispose();
+    super.dispose();
+  }
+
+  void _incrementarMinimo() {
+    final parsed = double.tryParse(_minimumController.text) ?? _minimum;
+    final nuevo = parsed + 1.0;
+    setState(() {
+      _minimum = nuevo;
+      _minimumController.text = _formatearNumero(nuevo);
+    });
+  }
+
+  void _decrementarMinimo() {
+    final parsed = double.tryParse(_minimumController.text) ?? _minimum;
+    if (parsed > 1.0) {
+      final nuevo = parsed - 1.0;
+      setState(() {
+        _minimum = nuevo;
+        _minimumController.text = _formatearNumero(nuevo);
+      });
+    } else if (parsed > 0.1) {
+      final nuevo = (parsed - 0.5).clamp(0.0, double.infinity);
+      setState(() {
+        _minimum = nuevo;
+        _minimumController.text = _formatearNumero(nuevo);
+      });
+    }
+  }
+
+  void _incrementarCantidad() {
+    final parsed = double.tryParse(_quantityController.text) ?? _quantity;
+    final nuevo = parsed + 1.0;
+    setState(() {
+      _quantity = nuevo;
+      _quantityController.text = _formatearNumero(nuevo);
+    });
+  }
+
+  void _decrementarCantidad() {
+    final parsed = double.tryParse(_quantityController.text) ?? _quantity;
+    if (parsed > 1.0) {
+      final nuevo = parsed - 1.0;
+      setState(() {
+        _quantity = nuevo;
+        _quantityController.text = _formatearNumero(nuevo);
+      });
+    } else if (parsed > 0.0) {
+      final nuevo = (parsed - 0.5).clamp(0.0, double.infinity);
+      setState(() {
+        _quantity = nuevo;
+        _quantityController.text = _formatearNumero(nuevo);
+      });
+    }
+  }
+
+  Future<void> _cargarCategorias() async {
+    final cats = await _categoriaDao.obtenerTodas();
+    if (mounted) {
+      setState(() => _categoriasBD = cats);
+    }
+  }
+
+  String _formatearFechaIso(DateTime dt) {
+    return '${dt.year.toString().padLeft(4, '0')}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
+  }
+
+  Future<void> _seleccionarFecha() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _fechaCaducidad,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2035),
+    );
+    if (picked != null) {
+      setState(() {
+        _fechaCaducidad = picked;
+        _dateController.text =
+            '${picked.day.toString().padLeft(2, '0')}/${picked.month.toString().padLeft(2, '0')}/${picked.year}';
+      });
+    }
+  }
+
+  Future<void> _guardar() async {
+    final parsedMin = double.tryParse(_minimumController.text) ?? _minimum;
+    final parsedQty = double.tryParse(_quantityController.text) ?? _quantity;
+
+    if (_name.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('El nombre del producto es obligatorio'),
+          backgroundColor: PantryColors.red,
+        ),
+      );
+      return;
+    }
+
+    if (parsedMin <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('El stock mínimo debe ser mayor a 0'),
+          backgroundColor: PantryColors.red,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _guardando = true);
+
+    try {
+      int catId = 1;
+      final encontrada = _categoriasBD.where(
+        (c) => c.nombre.toLowerCase() == _category.toLowerCase(),
+      );
+      if (encontrada.isNotEmpty) {
+        catId = encontrada.first.id!;
+      } else {
+        catId = await _categoriaDao.insertar(_category);
+      }
+
+      final unidadParaBD = _unit.toLowerCase() == 'l' ? 'lt' : _unit.toLowerCase();
+
+      if (widget.isEditing) {
+        final prodExistente = await _productoDao.obtenerPorId(widget.product!.id ?? 1);
+        final actualizado = Producto(
+          id: widget.product!.id,
+          nombre: _name.trim(),
+          unidadMedida: unidadParaBD,
+          stockMinimo: parsedMin,
+          categoriaId: catId,
+          ultimaTiendaId: prodExistente?.ultimaTiendaId,
+        );
+        await _productoDao.actualizar(actualizado);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Producto actualizado exitosamente'),
+              backgroundColor: PantryColors.green,
+            ),
+          );
+          Navigator.of(context).pop(true);
+        }
+      } else {
+        final nuevoProd = Producto(
+          nombre: _name.trim(),
+          unidadMedida: unidadParaBD,
+          stockMinimo: parsedMin,
+          categoriaId: catId,
+        );
+        final nuevoId = await _productoDao.insertar(nuevoProd);
+
+        if (parsedQty > 0) {
+          await _loteDao.insertarLote(
+            Lote(
+              productoId: nuevoId,
+              cantidad: parsedQty,
+              fechaCaducidad: _formatearFechaIso(_fechaCaducidad),
+              alarmaActiva: _reminder ? 1 : 0,
+            ),
+          );
+        }
+
+        if (mounted) {
+          String mensaje;
+          if (parsedQty > 0 && parsedQty > parsedMin) {
+            mensaje = 'La cantidad del lote supera el stock mínimo definido';
+          } else {
+            mensaje = 'Producto "$_name" guardado correctamente';
+          }
+
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(mensaje),
+              behavior: SnackBarBehavior.floating,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+          Navigator.of(context).pop(true);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al guardar: $e'),
+            backgroundColor: PantryColors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _guardando = false);
+      }
+    }
   }
 
   @override
@@ -59,23 +298,6 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                           ? AppSection.editProduct
                           : AppSection.newProduct,
                     ),
-                    actions: [
-                      Padding(
-                        padding: const EdgeInsets.only(right: 16),
-                        child: IconButton.filled(
-                          onPressed: () {},
-                          tooltip: 'Perfil',
-                          style: IconButton.styleFrom(
-                            backgroundColor: PantryColors.green,
-                            foregroundColor: Colors.white,
-                          ),
-                          icon: const Icon(
-                            Icons.person_outline_rounded,
-                            size: 19,
-                          ),
-                        ),
-                      ),
-                    ],
                   ),
                   SliverPadding(
                     padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
@@ -166,7 +388,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                         ),
                         const SizedBox(height: 8),
                         TextFormField(
-                          initialValue: _name,
+                          controller: _nameController,
                           onChanged: (value) => setState(() => _name = value),
                           style: const TextStyle(fontSize: 12),
                           decoration: _articleInput().copyWith(
@@ -258,6 +480,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                                         'kg',
                                         'L',
                                         'g',
+                                        'ml',
                                       ])
                                         Expanded(
                                           child: InkWell(
@@ -314,15 +537,14 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                                 ),
                                 const SizedBox(height: 10),
                                 _QuantityControl(
-                                  value: _minimum,
-                                  onDecrease: () => setState(() {
-                                    if (_minimum > 0) _minimum--;
-                                  }),
-                                  onIncrease: () => setState(() => _minimum++),
+                                  controller: _minimumController,
+                                  onDecrease: _decrementarMinimo,
+                                  onIncrease: _incrementarMinimo,
+                                  onChanged: (val) => setState(() => _minimum = val),
                                   label: 'stock mínimo',
                                 ),
                                 const SizedBox(height: 6),
-                                if (_minimum == 0)
+                                if (_minimum <= 0)
                                   const Text(
                                     'Ingresa un valor mayor a 0',
                                     style: TextStyle(
@@ -410,12 +632,11 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                                 ),
                                 const SizedBox(height: 9),
                                 _QuantityControl(
-                                  value: _quantity,
+                                  controller: _quantityController,
                                   unit: _unit,
-                                  onDecrease: () => setState(() {
-                                    if (_quantity > 0) _quantity--;
-                                  }),
-                                  onIncrease: () => setState(() => _quantity++),
+                                  onDecrease: _decrementarCantidad,
+                                  onIncrease: _incrementarCantidad,
+                                  onChanged: (val) => setState(() => _quantity = val),
                                   label: 'cantidad inicial',
                                 ),
                                 const SizedBox(height: 6),
@@ -433,7 +654,9 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                                 ),
                                 const SizedBox(height: 9),
                                 TextFormField(
+                                  controller: _dateController,
                                   readOnly: true,
+                                  onTap: _seleccionarFecha,
                                   style: const TextStyle(fontSize: 12),
                                   decoration: _articleInput().copyWith(
                                     hintText: 'dd/mm/aaaa',
@@ -442,15 +665,18 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                                       size: 18,
                                       color: PantryColors.green,
                                     ),
-                                    suffixIcon: const Icon(
-                                      Icons.event_outlined,
-                                      size: 18,
-                                      color: PantryColors.muted,
+                                    suffixIcon: IconButton(
+                                      icon: const Icon(
+                                        Icons.event_outlined,
+                                        size: 18,
+                                        color: PantryColors.muted,
+                                      ),
+                                      onPressed: _seleccionarFecha,
                                     ),
-                                    helperText: 'Selecciona una fecha de vencimiento válida',
+                                    helperText: 'Fecha de caducidad para el lote inicial (FEFO)',
                                     helperStyle: const TextStyle(
                                       fontSize: 10,
-                                      color: PantryColors.red,
+                                      color: PantryColors.green,
                                     ),
                                   ),
                                 ),
@@ -651,19 +877,28 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                         ),
                         const SizedBox(height: 24),
                         FilledButton(
-                          onPressed: () {},
+                          onPressed: _guardando ? null : _guardar,
                           style: FilledButton.styleFrom(
                             minimumSize: const Size.fromHeight(48),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12),
                             ),
                           ),
-                          child: Text(
-                            widget.isEditing
-                                ? 'Guardar cambios'
-                                : 'Guardar artículo',
-                            style: TextStyle(fontSize: 13),
-                          ),
+                          child: _guardando
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : Text(
+                                  widget.isEditing
+                                      ? 'Guardar cambios'
+                                      : 'Guardar artículo',
+                                  style: const TextStyle(fontSize: 13),
+                                ),
                         ),
                         const SizedBox(height: 5),
                         TextButton(
@@ -825,23 +1060,29 @@ class _PhotoButton extends StatelessWidget {
 
 class _QuantityControl extends StatelessWidget {
   const _QuantityControl({
-    required this.value,
+    required this.controller,
     required this.onDecrease,
     required this.onIncrease,
+    required this.onChanged,
     required this.label,
     this.unit,
   });
-  final int value;
+
+  final TextEditingController controller;
   final VoidCallback onDecrease;
   final VoidCallback onIncrease;
+  final ValueChanged<double> onChanged;
   final String label;
   final String? unit;
+
   @override
   Widget build(BuildContext context) => Container(
     decoration: BoxDecoration(
       color: PantryColors.background,
       borderRadius: BorderRadius.circular(10),
+      border: Border.all(color: PantryColors.border),
     ),
+    padding: const EdgeInsets.symmetric(horizontal: 4),
     child: Row(
       children: [
         IconButton(
@@ -854,10 +1095,49 @@ class _QuantityControl extends StatelessWidget {
           ),
         ),
         Expanded(
-          child: Text(
-            '$value${unit == null ? '' : '  $unit'}',
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: TextField(
+                  controller: controller,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: PantryColors.ink,
+                  ),
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
+                  ],
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(vertical: 8),
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                  ),
+                  onChanged: (text) {
+                    final valor = double.tryParse(text) ?? 0.0;
+                    onChanged(valor);
+                  },
+                ),
+              ),
+              if (unit != null)
+                Padding(
+                  padding: const EdgeInsets.only(left: 4, right: 6),
+                  child: Text(
+                    unit!,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: PantryColors.muted,
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
         IconButton(

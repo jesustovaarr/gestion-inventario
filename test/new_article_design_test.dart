@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:gestion_inventario/main_diseno.dart';
-
-import 'helpers/open_purchase.dart';
+import 'package:gestion_inventario/screens/pantalla_registrar_compra.dart';
 
 void main() {
   testWidgets('Nuevo artículo se abre desde Inicio y se adapta al celular', (
@@ -37,14 +36,20 @@ void main() {
     }
   });
 
-  testWidgets('Nuevo producto en Registrar compra abre el formulario', (
+  testWidgets('Registrar compra carga y no tiene los tres puntos en la barra superior', (
     tester,
   ) async {
-    await tester.pumpWidget(const AlacenaPreviewApp());
-    await openPurchaseFromProduct(tester);
-    await tester.tap(find.text('+ Nuevo producto'));
-    await tester.pumpAndSettle();
-    expect(find.text('Nuevo artículo'), findsOneWidget);
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: RegisterPurchaseScreen(),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    // Comprobar que los tres puntos fueron removidos
+    expect(find.byIcon(Icons.more_vert_rounded), findsNothing);
+    expect(find.byIcon(Icons.qr_code_scanner_rounded), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }
