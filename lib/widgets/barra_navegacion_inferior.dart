@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../components/tema_alacena.dart';
 
-/// Navegación compartida por listas, detalles y formularios de la maqueta.
+/// Navegación compartida por listas, detalles y formularios
 class AppBottomNavigation extends StatelessWidget {
   const AppBottomNavigation({
     super.key,
@@ -22,18 +22,27 @@ class AppBottomNavigation extends StatelessWidget {
     labelTextStyle: const WidgetStatePropertyAll(
       TextStyle(fontSize: 10, fontWeight: FontWeight.w500),
     ),
-    onDestinationSelected:
-        onDestinationSelected ??
-        (index) {
-          final navigator = Navigator.of(context, rootNavigator: true);
-          if (index == 0) {
-            navigator.popUntil((route) => route.isFirst);
-            return;
-          }
-          final name = const ['/', '/calendar', '/stores', '/cart'][index];
-          if (ModalRoute.of(context)?.settings.name == name) return;
-          navigator.pushNamedAndRemoveUntil(name, (route) => route.isFirst);
-        },
+    onDestinationSelected: (index) {
+      if (onDestinationSelected != null) {
+        onDestinationSelected!(index);
+        return;
+      }
+      if (index == selectedIndex) return;
+      switch (index) {
+        case 0:
+          Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
+          break;
+        case 1:
+          Navigator.of(context).pushNamedAndRemoveUntil('/calendar', (route) => false);
+          break;
+        case 2:
+          Navigator.of(context).pushNamedAndRemoveUntil('/stores', (route) => false);
+          break;
+        case 3:
+          Navigator.of(context).pushNamedAndRemoveUntil('/cart', (route) => false);
+          break;
+      }
+    },
     destinations: const [
       NavigationDestination(
         icon: Icon(Icons.home_outlined, size: 22),

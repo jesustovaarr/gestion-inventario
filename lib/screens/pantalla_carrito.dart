@@ -3,12 +3,12 @@ import 'package:flutter/material.dart';
 import '../widgets/encabezado_seccion.dart';
 import '../widgets/barra_navegacion_inferior.dart';
 import '../components/tema_alacena.dart';
-import '../presentation/datos_alacena_demostracion.dart';
-import '../presentation/lista_compras_demostracion.dart';
+import '../presentation/modelos_vista_alacena.dart';
+import '../presentation/controlador_carrito.dart';
 import '../widgets/miniatura_producto.dart';
+import '../database/daos/producto_dao.dart';
 import 'pantalla_registrar_compra.dart';
 
-/// Lista de demostración, sin persistencia ni reposición de inventario.
 class CartScreen extends StatefulWidget {
   const CartScreen({super.key});
 
@@ -18,6 +18,18 @@ class CartScreen extends StatefulWidget {
 
 class _CartScreenState extends State<CartScreen> {
   PantryProductPreview? _purchaseProduct;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        try {
+          ShoppingListsPreviewScope.of(context).cargarDesdeBD();
+        } catch (_) {}
+      }
+    });
+  }
 
   Future<void> _selectPurchaseProduct(
     ShoppingListsPreviewController controller,
@@ -62,9 +74,9 @@ class _CartScreenState extends State<CartScreen> {
                 slivers: [
                   const SliverAppBar(
                     toolbarHeight: 68,
-                    leadingWidth: 40,
                     pinned: true,
-                    titleSpacing: 0,
+                    automaticallyImplyLeading: false,
+                    titleSpacing: 20,
                     title: AppSectionHeading(section: AppSection.shoppingLists),
                   ),
                   SliverPadding(
@@ -137,7 +149,17 @@ class _CartScreenState extends State<CartScreen> {
                               IconButton(
                                 onPressed: current.items.isEmpty
                                     ? null
-                                    : controller.clearCurrent,
+                                    : () {
+                                        controller.clearCurrent();
+                                        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            content: Text('Lista de compras vaciada'),
+                                            duration: Duration(seconds: 2),
+                                            behavior: SnackBarBehavior.floating,
+                                          ),
+                                        );
+                                      },
                                 tooltip: 'Vaciar lista actual',
                                 icon: const Icon(
                                   Icons.delete_sweep_outlined,
@@ -164,8 +186,18 @@ class _CartScreenState extends State<CartScreen> {
                             product: item.product,
                             quantity: '${item.quantity}',
                             alert: item.product.note,
-                            onRemove: () =>
-                                controller.removeProduct(item.product),
+                            onRemove: () {
+                              final name = item.product.name;
+                              controller.removeProduct(item.product);
+                              ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('"$name" eliminado de la lista'),
+                                  duration: const Duration(seconds: 2),
+                                  behavior: SnackBarBehavior.floating,
+                                ),
+                              );
+                            },
                             onDecrease: () =>
                                 controller.changeQuantity(item.product, -1),
                             onIncrease: () =>
@@ -368,7 +400,17 @@ class _CartScreenState extends State<CartScreen> {
                     child: FilledButton(
                       onPressed: current.items.isEmpty
                           ? null
-                          : controller.clearCurrent,
+                          : () {
+                              controller.clearCurrent();
+                              ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Lista de compras completada'),
+                                  duration: Duration(seconds: 2),
+                                  behavior: SnackBarBehavior.floating,
+                                ),
+                              );
+                            },
                       style: FilledButton.styleFrom(
                         minimumSize: const Size.fromHeight(48),
                         shape: RoundedRectangleBorder(
@@ -568,7 +610,7 @@ class _EmptyCart extends StatelessWidget {
   );
 }
 
-class _CatalogPicker extends StatelessWidget {
+class _CatalogPicker extends StatefulWidget {
   const _CatalogPicker({
     required this.controller,
     this.selectForPurchase = false,
@@ -577,10 +619,36 @@ class _CatalogPicker extends StatelessWidget {
   final bool selectForPurchase;
 
   @override
+  State<_CatalogPicker> createState() => _CatalogPickerState();
+}
+
+class _CatalogPickerState extends State<_CatalogPicker> {
+  final ProductoDao _productoDao = ProductoDao();
+  List<PantryProductPreview> _products = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProducts();
+  }
+
+  Future<void> _loadProducts() async {
+    try {
+      final list = await _productoDao.obtenerConStock();
+      if (mounted) {
+        setState(() {
+          _products = list.map((p) => p.toPreview()).toList();
+          _loading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final products = pantryPreviewSections
-        .expand((section) => section.products)
-        .toList();
     return SizedBox(
       height: MediaQuery.sizeOf(context).height * .75,
       child: Column(
@@ -591,7 +659,7 @@ class _CatalogPicker extends StatelessWidget {
               children: [
                 const Expanded(
                   child: Text(
-                    'Productos del catálogo',
+                    'Productos del inventario',
                     style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
                   ),
                 ),
@@ -604,67 +672,102 @@ class _CatalogPicker extends StatelessWidget {
             ),
           ),
           Expanded(
-            child: CustomScrollView(
-              slivers: [
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-                  sliver: SliverList.builder(
-                    itemCount: products.length,
-                    itemBuilder: (_, index) {
-                      final product = products[index];
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: Row(
-                          children: [
-                            ProductThumbnail(kind: product.thumbnail, size: 48),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    product.name,
-                                    style: const TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    product.category,
-                                    style: const TextStyle(
-                                      fontSize: 10,
-                                      color: PantryColors.muted,
-                                    ),
-                                  ),
-                                ],
-                              ),
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _products.isEmpty
+                    ? const Center(
+                        child: Padding(
+                          padding: EdgeInsets.all(24),
+                          child: Text(
+                            'No hay productos registrados en el inventario.\nAgrega artículos primero desde Inicio.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: PantryColors.muted,
+                              fontSize: 13,
                             ),
-                            IconButton(
-                              onPressed: () {
-                                if (selectForPurchase) {
-                                  Navigator.of(context).pop(product);
-                                } else {
-                                  controller.addProduct(product);
-                                  Navigator.of(context).pop();
-                                }
-                              },
-                              tooltip: selectForPurchase
-                                  ? 'Seleccionar ${product.name} para compra'
-                                  : 'Añadir ${product.name} a la lista',
-                              icon: const Icon(
-                                Icons.add_circle_outline_rounded,
-                                color: PantryColors.green,
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
+                      )
+                    : CustomScrollView(
+                        slivers: [
+                          SliverPadding(
+                            padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                            sliver: SliverList.builder(
+                              itemCount: _products.length,
+                              itemBuilder: (_, index) {
+                                final product = _products[index];
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 12),
+                                  child: Row(
+                                    children: [
+                                      ProductThumbnail(
+                                        kind: product.thumbnail,
+                                        imagePath: product.imagePath,
+                                        size: 48,
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              product.name,
+                                              style: const TextStyle(
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              product.category,
+                                              style: const TextStyle(
+                                                fontSize: 10,
+                                                color: PantryColors.muted,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      IconButton(
+                                        onPressed: () {
+                                          if (widget.selectForPurchase) {
+                                            Navigator.of(context).pop(product);
+                                          } else {
+                                            final messenger =
+                                                ScaffoldMessenger.of(context);
+                                            widget.controller.addProduct(product);
+                                            Navigator.of(context).pop();
+                                            messenger.hideCurrentSnackBar();
+                                            messenger.showSnackBar(
+                                              SnackBar(
+                                                content: Text(
+                                                  '"${product.name}" agregado a la lista de compras',
+                                                ),
+                                                duration:
+                                                    const Duration(seconds: 2),
+                                                behavior:
+                                                    SnackBarBehavior.floating,
+                                              ),
+                                            );
+                                          }
+                                        },
+                                        tooltip: widget.selectForPurchase
+                                            ? 'Seleccionar ${product.name} para compra'
+                                            : 'Añadir ${product.name} a la lista',
+                                        icon: const Icon(
+                                          Icons.add_circle_outline_rounded,
+                                          color: PantryColors.green,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
           ),
         ],
       ),
