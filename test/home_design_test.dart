@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:badges/badges.dart' as badges;
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gestion_inventario/main_diseno.dart';
+import 'package:gestion_inventario/main.dart';
 
 void main() {
   testWidgets('Inicio se adapta al celular y permite recorrer las secciones', (

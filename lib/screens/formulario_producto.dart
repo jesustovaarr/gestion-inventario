@@ -4,7 +4,7 @@ import 'package:flutter/services.dart';
 import '../widgets/encabezado_seccion.dart';
 import '../widgets/barra_navegacion_inferior.dart';
 import '../components/tema_alacena.dart';
-import '../presentation/datos_alacena_demostracion.dart';
+import '../presentation/modelos_vista_alacena.dart';
 import '../widgets/miniatura_producto.dart';
 import '../models/producto_model.dart';
 import '../models/lote_model.dart';

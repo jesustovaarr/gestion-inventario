@@ -7,7 +7,7 @@ import '../widgets/barra_navegacion_inferior.dart';
 import 'package:badges/badges.dart' as badges;
 
 import '../components/tema_alacena.dart';
-import '../presentation/datos_alacena_demostracion.dart';
+import '../presentation/modelos_vista_alacena.dart';
 import '../widgets/tarjeta_producto.dart';
 import '../widgets/acciones_deslizables_catalogo.dart';
 

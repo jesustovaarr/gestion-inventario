@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../components/tema_alacena.dart';
-import '../presentation/datos_alacena_demostracion.dart';
+import '../presentation/modelos_vista_alacena.dart';
 import 'miniatura_producto.dart';
 
 class ProductCard extends StatelessWidget {
