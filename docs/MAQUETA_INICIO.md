@@ -6,7 +6,7 @@ El proyecto requiere Dart 3.13.1 o superior, menor que 4.0.0.
 
 ```bash
 flutter pub get
-flutter run -t lib/main_diseno.dart
+flutter run
 ```
 
 La entrada independiente conserva la eliminación previa de `lib/main.dart`.
@@ -21,9 +21,8 @@ La carpeta `../lib/` con el código para reciclar permanece intacta.
 - `lib/screens/pantalla_carrito.dart`: una sola lista de compras;
   selección de productos del catálogo y cantidades a comprar.
   Se abre desde el contador de Inicio o desde Carrito en la barra inferior.
-- `lib/presentation/lista_compras_demostracion.dart`: estado compartido en memoria
-  para conservar la lista entre pantallas mientras la app siga abierta.
-  Completar lista la vacía sin archivarla, registrar compras ni ajustar stock.
+- `lib/presentation/controlador_carrito.dart`: estado compartido sincronizado con SQLite
+  para conservar la lista de compras entre pantallas.
 - `lib/screens/pantalla_registrar_compra.dart`: formulario de compra con
   producto, tienda, cantidades, precio, fechas, ubicación y resumen de stock.
   Se abre desde Anotar compra en el detalle o desde Agregar, debajo de los
@@ -61,10 +60,8 @@ La carpeta `../lib/` con el código para reciclar permanece intacta.
   pantalla completa con los productos, cantidades, ubicaciones y estados de
   ese día. Cerrar el modal permite consultar el resumen actualizado debajo del
   calendario. Incluye el estado de día sin alertas.
-- `lib/presentation/datos_calendario_demostracion.dart`: ejemplos fijos de mayo de 2024
-  para reproducir la imagen. Cada punto corresponde a un producto de esa fecha;
-  no se calculan caducidades ni se consultan existencias. Hoy lleva a la fecha
-  del dispositivo. También hay cinco ejemplos el 14 de octubre de 2024.
+- `lib/presentation/modelos_vista_calendario.dart`: modelos de vista para alertas
+  y formateo de fechas del calendario.
 - `lib/screens/pantalla_alertas_dia.dart`: modal diario con filtros por estado,
   lotes, cantidades, tarjetas con miniatura y botones de acción. El 31 de mayo
   contiene cinco productos para ver todos los estados de la maqueta. Día
@@ -89,8 +86,8 @@ La carpeta `../lib/` con el código para reciclar permanece intacta.
   La vista diaria usa una hoja de calendario. Mantiene los botones de volver y
   las acciones existentes y adapta el tamaño del logo a pantallas estrechas.
 - `lib/components/tema_alacena.dart`: colores y tema.
-- `lib/presentation/datos_alacena_demostracion.dart`: textos y productos de muestra,
-  separados de las futuras entidades y consultas de base de datos.
+- `lib/presentation/modelos_vista_alacena.dart`: modelos de vista y agrupación
+  por estado conectados a SQLite para la pantalla principal.
 
 Tocar una tarjeta abre el detalle del producto y la flecha permite regresar.
 Las pestañas del detalle cambian el contenido visual. Los demás botones y

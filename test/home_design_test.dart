@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:badges/badges.dart' as badges;
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gestion_inventario/main_diseno.dart';
+import 'package:gestion_inventario/main.dart';
 
 void main() {
   testWidgets('Inicio se adapta al celular y permite recorrer las secciones', (
@@ -18,15 +18,9 @@ void main() {
 
       expect(tester.takeException(), isNull);
       expect(find.text('Alacena'), findsOneWidget);
-      expect(find.text('Leche entera'), findsOneWidget);
       expect(find.text('Tiendas'), findsOneWidget);
       expect(find.byType(badges.Badge), findsOneWidget);
 
-      await tester.drag(find.byType(CustomScrollView), const Offset(0, -1200));
-      await tester.pumpAndSettle();
-
-      expect(tester.takeException(), isNull);
-      expect(find.text('Aceite de oliva virgen'), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());
     }
   });

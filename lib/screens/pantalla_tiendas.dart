@@ -1,20 +1,146 @@
 import 'package:flutter/material.dart';
 
 import '../widgets/encabezado_seccion.dart';
-
 import '../widgets/barra_navegacion_inferior.dart';
-
 import '../components/tema_alacena.dart';
-import 'pantalla_editar_tienda.dart';
+import '../models/tienda_model.dart';
+import '../database/daos/tienda_dao.dart';
 import 'formulario_tienda.dart';
+import 'pantalla_editar_tienda.dart';
 import '../widgets/acciones_deslizables_catalogo.dart';
 
-/// Catálogo visual de tiendas con datos fijos, sin consultas ni modificaciones.
-class StoresScreen extends StatelessWidget {
+/// Catálogo de tiendas
+class StoresScreen extends StatefulWidget {
   const StoresScreen({super.key});
 
   @override
+  State<StoresScreen> createState() => _StoresScreenState();
+}
+
+class _StoresScreenState extends State<StoresScreen> {
+  final TiendaDao _tiendaDao = TiendaDao();
+  final TextEditingController _searchController = TextEditingController();
+
+  List<Tienda> _todasLasTiendas = [];
+  bool _cargando = true;
+  bool _mostrarBuscador = false;
+  String _filtroTexto = '';
+  String _filtroActivo = 'Todas';
+
+  @override
+  void initState() {
+    super.initState();
+    _cargarTiendas();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _cargarTiendas() async {
+    setState(() => _cargando = true);
+    final tiendas = await _tiendaDao.obtenerTodas();
+    if (mounted) {
+      setState(() {
+        _todasLasTiendas = tiendas;
+        _cargando = false;
+      });
+    }
+  }
+
+  List<Tienda> get _tiendasFiltradas {
+    return _todasLasTiendas.where((tienda) {
+      final matchesSearch = _filtroTexto.isEmpty ||
+          tienda.nombre.toLowerCase().contains(_filtroTexto.toLowerCase()) ||
+          (tienda.ubicacion ?? '').toLowerCase().contains(_filtroTexto.toLowerCase());
+
+      if (!matchesSearch) return false;
+
+      switch (_filtroActivo) {
+        case 'Con compras':
+          return tienda.totalCompras > 0;
+        case 'Frecuentes':
+          return tienda.totalCompras >= 3;
+        case 'Todas':
+        default:
+          return true;
+      }
+    }).toList();
+  }
+
+  Future<void> _abrirNuevaTienda() async {
+    final creado = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => const StoreFormScreen(),
+      ),
+    );
+    if (creado == true) {
+      _cargarTiendas();
+    }
+  }
+
+  Future<void> _abrirEditarTienda(Tienda tienda) async {
+    final editado = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => EditStoreScreen(
+          storeId: tienda.id,
+          storeName: tienda.nombre,
+          address: tienda.ubicacion ?? '',
+          purchases: tienda.totalCompras,
+          tipoTiendaId: tienda.tipoTiendaId,
+        ),
+      ),
+    );
+    if (editado == true) {
+      _cargarTiendas();
+    }
+  }
+
+  Future<void> _intentarEliminarTienda(Tienda tienda) async {
+    final tieneCompras = tienda.totalCompras > 0;
+    final String mensaje = tieneCompras
+        ? 'Esta tienda tiene ${tienda.totalCompras} compras registradas en el historial. Si la eliminas, se eliminarán también dichos registros.\n\n¿Deseas eliminar definitivamente "${tienda.nombre}"?'
+        : '¿Deseas eliminar definitivamente "${tienda.nombre}"?';
+
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Eliminar tienda'),
+        content: Text(mensaje),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: PantryColors.red),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmar == true && tienda.id != null) {
+      await _tiendaDao.eliminar(tienda.id!);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Tienda "${tienda.nombre}" eliminada'),
+            backgroundColor: PantryColors.green,
+          ),
+        );
+        _cargarTiendas();
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final tiendasAMostrar = _tiendasFiltradas;
+
     return ColoredBox(
       color: PantryColors.greenLight,
       child: Center(
@@ -28,114 +154,186 @@ class StoresScreen extends StatelessWidget {
                 slivers: [
                   SliverAppBar(
                     toolbarHeight: 68,
-                    leadingWidth: 40,
                     pinned: true,
-                    titleSpacing: 0,
+                    automaticallyImplyLeading: false,
+                    titleSpacing: 20,
                     title: const AppSectionHeading(
                       section: AppSection.stores,
-                      count: '4',
                     ),
                     actions: [
-                      IconButton(
-                        onPressed: () {},
-                        tooltip: 'Buscar tienda',
-                        icon: const Icon(Icons.search_rounded, size: 21),
-                      ),
-                      IconButton(
-                        onPressed: () {},
-                        tooltip: 'Más opciones',
-                        icon: const Icon(Icons.more_vert_rounded, size: 20),
-                      ),
                       Padding(
                         padding: const EdgeInsets.only(right: 12),
-                        child: IconButton.filled(
-                          onPressed: () {},
-                          tooltip: 'Perfil',
-                          style: IconButton.styleFrom(
-                            backgroundColor: PantryColors.green,
-                            foregroundColor: Colors.white,
-                          ),
-                          icon: const Icon(
-                            Icons.person_outline_rounded,
-                            size: 18,
+                        child: IconButton(
+                          tooltip: _mostrarBuscador
+                              ? 'Cerrar búsqueda'
+                              : 'Buscar tiendas',
+                          onPressed: () {
+                            setState(() {
+                              _mostrarBuscador = !_mostrarBuscador;
+                              if (!_mostrarBuscador) {
+                                _searchController.clear();
+                                _filtroTexto = '';
+                              }
+                            });
+                          },
+                          icon: Icon(
+                            _mostrarBuscador
+                                ? Icons.close_rounded
+                                : Icons.search_rounded,
+                            size: 22,
                           ),
                         ),
                       ),
                     ],
                   ),
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(20, 14, 20, 14),
-                    sliver: SliverToBoxAdapter(
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              decoration: InputDecoration(
-                                hintText: 'Buscar tienda o sucursal…',
-                                hintStyle: const TextStyle(
-                                  fontSize: 12,
-                                  color: PantryColors.muted,
-                                ),
-                                prefixIcon: const Icon(
-                                  Icons.search_rounded,
-                                  size: 20,
-                                  color: PantryColors.muted,
-                                ),
-                                suffixIcon: IconButton(
-                                  onPressed: () {},
-                                  tooltip: 'Limpiar búsqueda',
-                                  icon: const Icon(
-                                    Icons.close_rounded,
-                                    size: 17,
-                                    color: PantryColors.muted,
-                                  ),
-                                ),
-                                filled: true,
-                                fillColor: Colors.white,
-                                contentPadding: const EdgeInsets.symmetric(
-                                  vertical: 14,
-                                  horizontal: 12,
-                                ),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(13),
-                                  borderSide: const BorderSide(
-                                    color: PantryColors.border,
-                                  ),
-                                ),
-                                enabledBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(13),
-                                  borderSide: const BorderSide(
-                                    color: PantryColors.border,
-                                  ),
-                                ),
+                  if (_mostrarBuscador)
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
+                      sliver: SliverToBoxAdapter(
+                        child: TextField(
+                          controller: _searchController,
+                          autofocus: true,
+                          onChanged: (val) =>
+                              setState(() => _filtroTexto = val),
+                          decoration: InputDecoration(
+                            hintText: 'Buscar tienda o sucursal…',
+                            hintStyle: const TextStyle(
+                              fontSize: 12,
+                              color: PantryColors.muted,
+                            ),
+                            prefixIcon: const Icon(
+                              Icons.search_rounded,
+                              size: 20,
+                              color: PantryColors.green,
+                            ),
+                            suffixIcon: _filtroTexto.isNotEmpty
+                                ? IconButton(
+                                    onPressed: () {
+                                      _searchController.clear();
+                                      setState(() => _filtroTexto = '');
+                                    },
+                                    tooltip: 'Limpiar búsqueda',
+                                    icon: const Icon(
+                                      Icons.close_rounded,
+                                      size: 17,
+                                      color: PantryColors.muted,
+                                    ),
+                                  )
+                                : null,
+                            filled: true,
+                            fillColor: Colors.white,
+                            contentPadding: const EdgeInsets.symmetric(
+                              vertical: 12,
+                              horizontal: 12,
+                            ),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(13),
+                              borderSide: const BorderSide(
+                                color: PantryColors.border,
+                              ),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(13),
+                              borderSide: const BorderSide(
+                                color: PantryColors.border,
                               ),
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          IconButton.filledTonal(
-                            onPressed: () {},
-                            tooltip: 'Filtrar tiendas',
-                            style: IconButton.styleFrom(
-                              backgroundColor: PantryColors.greenLight,
-                              foregroundColor: PantryColors.green,
-                              minimumSize: const Size(48, 48),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(13),
-                              ),
+                        ),
+                      ),
+                    )
+                  else
+                    const SliverToBoxAdapter(child: SizedBox(height: 12)),
+                  SliverToBoxAdapter(
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Row(
+                        children: [
+                          FilledButton(
+                            onPressed: () => setState(() => _filtroActivo = 'Todas'),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: _filtroActivo == 'Todas'
+                                  ? PantryColors.green
+                                  : Colors.white,
+                              foregroundColor: _filtroActivo == 'Todas'
+                                  ? Colors.white
+                                  : PantryColors.ink,
+                              side: _filtroActivo == 'Todas'
+                                  ? BorderSide.none
+                                  : const BorderSide(color: PantryColors.border),
+                              padding: const EdgeInsets.symmetric(horizontal: 13),
+                              minimumSize: const Size(0, 36),
                             ),
-                            icon: const Icon(Icons.tune_rounded, size: 20),
+                            child: Text(
+                              'Todas   ${_todasLasTiendas.length}',
+                              style: const TextStyle(fontSize: 11),
+                            ),
+                          ),
+                          const SizedBox(width: 7),
+                          OutlinedButton.icon(
+                            onPressed: () => setState(() => _filtroActivo = 'Con compras'),
+                            icon: Icon(
+                              Icons.receipt_long_outlined,
+                              size: 14,
+                              color: _filtroActivo == 'Con compras'
+                                  ? PantryColors.green
+                                  : PantryColors.muted,
+                            ),
+                            label: const Text(
+                              'Con compras registradas',
+                              style: TextStyle(fontSize: 11, color: PantryColors.ink),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              backgroundColor: _filtroActivo == 'Con compras'
+                                  ? PantryColors.greenLight
+                                  : Colors.white,
+                              side: BorderSide(
+                                color: _filtroActivo == 'Con compras'
+                                    ? PantryColors.green
+                                    : PantryColors.border,
+                              ),
+                              padding: const EdgeInsets.symmetric(horizontal: 11),
+                              minimumSize: const Size(0, 36),
+                            ),
+                          ),
+                          const SizedBox(width: 7),
+                          OutlinedButton.icon(
+                            onPressed: () => setState(() => _filtroActivo = 'Frecuentes'),
+                            icon: Icon(
+                              Icons.star_border_rounded,
+                              size: 14,
+                              color: _filtroActivo == 'Frecuentes'
+                                  ? PantryColors.green
+                                  : PantryColors.muted,
+                            ),
+                            label: const Text(
+                              'Frecuentes',
+                              style: TextStyle(fontSize: 11, color: PantryColors.ink),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              backgroundColor: _filtroActivo == 'Frecuentes'
+                                  ? PantryColors.greenLight
+                                  : Colors.white,
+                              side: BorderSide(
+                                color: _filtroActivo == 'Frecuentes'
+                                    ? PantryColors.green
+                                    : PantryColors.border,
+                              ),
+                              padding: const EdgeInsets.symmetric(horizontal: 11),
+                              minimumSize: const Size(0, 36),
+                            ),
                           ),
                         ],
                       ),
                     ),
                   ),
-                  const SliverToBoxAdapter(child: _StoreFilters()),
-                  const SliverPadding(
-                    padding: EdgeInsets.fromLTRB(20, 20, 20, 14),
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 14),
                     sliver: SliverToBoxAdapter(
                       child: Row(
                         children: [
-                          Expanded(
+                          const Expanded(
                             child: Text(
                               'CATÁLOGO DE TIENDAS',
                               style: TextStyle(
@@ -146,8 +344,8 @@ class StoresScreen extends StatelessWidget {
                             ),
                           ),
                           Text(
-                            '4 registradas',
-                            style: TextStyle(
+                            '${tiendasAMostrar.length} registradas',
+                            style: const TextStyle(
                               fontSize: 10,
                               color: PantryColors.muted,
                             ),
@@ -156,84 +354,60 @@ class StoresScreen extends StatelessWidget {
                       ),
                     ),
                   ),
-                  SliverPadding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    sliver: SliverList.builder(
-                      itemCount: _stores.length,
-                      itemBuilder: (context, index) {
-                        final store = _stores[index];
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 14),
-                          child: CatalogSwipeActions(
-                            key: ValueKey('store-swipe-${store.name}'),
-                            name: store.name,
-                            onEdit: () => Navigator.of(context).push(
-                              MaterialPageRoute<void>(
-                                builder: (_) => StoreFormScreen(
-                                  storeName: store.name,
-                                  address: store.address,
-                                  purchases: store.purchases,
-                                ),
-                              ),
-                            ),
-                            onDelete: () => showCatalogRemovalPreview(
-                              context,
-                              name: store.name,
-                              blockedByPurchases: store.purchases > 0,
-                            ),
-                            child: _StoreCard(store: store),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                  const SliverPadding(
-                    padding: EdgeInsets.fromLTRB(20, 4, 20, 110),
-                    sliver: SliverToBoxAdapter(
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: Color(0xFFEAF4EB),
-                          borderRadius: BorderRadius.all(Radius.circular(14)),
-                          border: Border.fromBorderSide(
-                            BorderSide(color: PantryColors.border),
-                          ),
-                        ),
+                  if (_cargando)
+                    const SliverToBoxAdapter(
+                      child: Center(
                         child: Padding(
-                          padding: EdgeInsets.all(15),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Icon(
-                                Icons.tips_and_updates_outlined,
-                                size: 20,
-                                color: PantryColors.green,
-                              ),
-                              SizedBox(width: 10),
-                              Expanded(
-                                child: Text(
-                                  'Asocia cada ticket o compra a una tienda para obtener comparativas automáticas de precios y saber dónde consigues tu despensa más barata.',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    height: 1.5,
-                                    color: PantryColors.muted,
-                                  ),
-                                ),
-                              ),
-                            ],
+                          padding: EdgeInsets.all(32),
+                          child: CircularProgressIndicator(),
+                        ),
+                      ),
+                    )
+                  else if (tiendasAMostrar.isEmpty)
+                    SliverToBoxAdapter(
+                      child: Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(32),
+                          child: Text(
+                            _filtroTexto.isNotEmpty
+                                ? 'No se encontraron tiendas que coincidan con "$_filtroTexto"'
+                                : 'No hay tiendas registradas.',
+                            style: const TextStyle(color: PantryColors.muted, fontSize: 12),
                           ),
                         ),
                       ),
+                    )
+                  else
+                    SliverPadding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      sliver: SliverList.builder(
+                        itemCount: tiendasAMostrar.length,
+                        itemBuilder: (context, index) {
+                          final tienda = tiendasAMostrar[index];
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 14),
+                            child: CatalogSwipeActions(
+                              key: ValueKey('store-swipe-${tienda.id ?? tienda.nombre}'),
+                              name: tienda.nombre,
+                              onEdit: () => _abrirEditarTienda(tienda),
+                              onDelete: () => _intentarEliminarTienda(tienda),
+                              child: _StoreCard(
+                                tienda: tienda,
+                                onEdit: () => _abrirEditarTienda(tienda),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
                     ),
-                  ),
+                    const SliverToBoxAdapter(
+                      child: SizedBox(height: 90),
+                    ),
                 ],
               ),
             ),
             floatingActionButton: FloatingActionButton.extended(
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => const StoreFormScreen(),
-                ),
-              ),
+              onPressed: _abrirNuevaTienda,
               heroTag: null,
               icon: const Icon(Icons.add_rounded, size: 23),
               label: const Text(
@@ -248,265 +422,175 @@ class StoresScreen extends StatelessWidget {
   }
 }
 
-class _StoreFilters extends StatelessWidget {
-  const _StoreFilters();
-  @override
-  Widget build(BuildContext context) => SingleChildScrollView(
-    scrollDirection: Axis.horizontal,
-    padding: const EdgeInsets.symmetric(horizontal: 20),
-    child: Row(
-      children: [
-        FilledButton(
-          onPressed: () {},
-          style: FilledButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 13),
-            minimumSize: const Size(0, 36),
-          ),
-          child: const Text('Todas   4', style: TextStyle(fontSize: 11)),
-        ),
-        const SizedBox(width: 7),
-        _FilterPill(
-          icon: Icons.receipt_long_outlined,
-          label: 'Con compras registradas',
-        ),
-        const SizedBox(width: 7),
-        _FilterPill(icon: Icons.star_border_rounded, label: 'Frecuentes'),
-      ],
-    ),
-  );
-}
-
-class _FilterPill extends StatelessWidget {
-  const _FilterPill({required this.icon, required this.label});
-  final IconData icon;
-  final String label;
-  @override
-  Widget build(BuildContext context) => OutlinedButton.icon(
-    onPressed: () {},
-    icon: Icon(icon, size: 14, color: PantryColors.green),
-    label: Text(
-      label,
-      style: const TextStyle(fontSize: 11, color: PantryColors.ink),
-    ),
-    style: OutlinedButton.styleFrom(
-      backgroundColor: Colors.white,
-      side: const BorderSide(color: PantryColors.border),
-      padding: const EdgeInsets.symmetric(horizontal: 11),
-      minimumSize: const Size(0, 36),
-    ),
-  );
-}
-
 class _StoreCard extends StatelessWidget {
-  const _StoreCard({required this.store});
-  final _StorePreview store;
+  const _StoreCard({required this.tienda, required this.onEdit});
+  final Tienda tienda;
+  final VoidCallback onEdit;
+
+  IconData _iconForType(String? tipo) {
+    switch (tipo?.toLowerCase()) {
+      case 'supermercado':
+        return Icons.storefront_outlined;
+      case 'mayorista':
+      case 'club de precios':
+        return Icons.apartment_rounded;
+      case 'tienda local':
+      case 'tiendita de la esquina':
+        return Icons.shopping_basket_outlined;
+      case 'mercado / tianguis':
+      case 'mercado local':
+        return Icons.store_mall_directory_outlined;
+      default:
+        return Icons.storefront_outlined;
+    }
+  }
+
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.fromLTRB(14, 12, 10, 13),
-    decoration: BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(17),
-      border: Border.all(color: PantryColors.border),
-    ),
-    child: Column(
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        padding: const EdgeInsets.fromLTRB(14, 12, 10, 13),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(17),
+          border: Border.all(color: PantryColors.border),
+        ),
+        child: Column(
           children: [
-            Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: PantryColors.greenLight,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(store.icon, size: 23, color: PantryColors.green),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          store.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                      if (store.frequent) ...[
-                        const SizedBox(width: 5),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 5,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: PantryColors.greenLight,
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: const Text(
-                            'Frecuente',
-                            style: TextStyle(
-                              fontSize: 8,
-                              color: PantryColors.green,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: PantryColors.greenLight,
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  const SizedBox(height: 7),
-                  Row(
+                  child: Icon(
+                    _iconForType(tienda.tipoTiendaNombre),
+                    size: 23,
+                    color: PantryColors.green,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(
-                        Icons.location_on_outlined,
-                        size: 12,
-                        color: PantryColors.muted,
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              tienda.nombre,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          if (tienda.totalCompras >= 3) ...[
+                            const SizedBox(width: 5),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: PantryColors.greenLight,
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: const Text(
+                                'Frecuente',
+                                style: TextStyle(
+                                  fontSize: 8,
+                                  color: PantryColors.green,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
-                      const SizedBox(width: 3),
-                      Expanded(
-                        child: Text(
-                          store.address,
-                          style: const TextStyle(
-                            fontSize: 10,
-                            height: 1.4,
+                      const SizedBox(height: 7),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(
+                            Icons.location_on_outlined,
+                            size: 12,
                             color: PantryColors.muted,
                           ),
-                        ),
+                          const SizedBox(width: 3),
+                          Expanded(
+                            child: Text(
+                              tienda.ubicacion?.isNotEmpty == true
+                                  ? tienda.ubicacion!
+                                  : 'Sin dirección registrada',
+                              style: const TextStyle(
+                                fontSize: 10,
+                                height: 1.4,
+                                color: PantryColors.muted,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
+                  ),
+                ),
+                PopupMenuButton<String>(
+                  tooltip: 'Opciones de ${tienda.nombre}',
+                  onSelected: (value) {
+                    if (value == 'edit') {
+                      onEdit();
+                    }
+                  },
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 150),
+                  icon: const Icon(
+                    Icons.more_vert_rounded,
+                    size: 18,
+                    color: PantryColors.muted,
+                  ),
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(value: 'edit', child: Text('Editar tienda')),
+                    PopupMenuItem(
+                      value: 'history',
+                      child: Text('Historial de compras'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 11),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+              decoration: BoxDecoration(
+                color: PantryColors.background,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.receipt_long_outlined,
+                    size: 13,
+                    color: PantryColors.green,
+                  ),
+                  const SizedBox(width: 5),
+                  Text(
+                    '${tienda.totalCompras} ${tienda.totalCompras == 1 ? 'compra registrada' : 'compras registradas'}',
+                    style: const TextStyle(
+                      fontSize: 10,
+                      color: PantryColors.green,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    tienda.tipoTiendaNombre ?? 'Supermercado',
+                    style: const TextStyle(fontSize: 10, color: PantryColors.muted),
                   ),
                 ],
               ),
             ),
-            PopupMenuButton<String>(
-              tooltip: 'Opciones de ${store.name}',
-              onSelected: (value) {
-                if (value == 'edit') {
-                  Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => EditStoreScreen(
-                        storeName: store.name,
-                        address: store.address,
-                        purchases: store.purchases,
-                      ),
-                    ),
-                  );
-                }
-              },
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 150),
-              icon: const Icon(
-                Icons.more_vert_rounded,
-                size: 18,
-                color: PantryColors.muted,
-              ),
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: 'edit', child: Text('Editar tienda')),
-                PopupMenuItem(
-                  value: 'history',
-                  child: Text('Historial de compras'),
-                ),
-                PopupMenuItem(
-                  value: 'deactivate',
-                  child: Text('Desactivar tienda'),
-                ),
-              ],
-            ),
           ],
         ),
-        const SizedBox(height: 11),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 7),
-          decoration: BoxDecoration(
-            color: PantryColors.background,
-            borderRadius: BorderRadius.circular(7),
-          ),
-          child: Wrap(
-            spacing: 7,
-            runSpacing: 5,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              const Icon(
-                Icons.receipt_long_outlined,
-                size: 13,
-                color: PantryColors.green,
-              ),
-              Text(
-                '${store.purchases} ${store.purchases == 1 ? 'compra registrada' : 'compras registradas'}',
-                style: const TextStyle(
-                  fontSize: 10,
-                  color: PantryColors.green,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              Text(
-                'Última compra: ${store.lastPurchase}',
-                style: const TextStyle(fontSize: 10, color: PantryColors.muted),
-              ),
-            ],
-          ),
-        ),
-      ],
-    ),
-  );
+      );
 }
-
-class _StorePreview {
-  const _StorePreview(
-    this.name,
-    this.address,
-    this.purchases,
-    this.lastPurchase,
-    this.icon, {
-    this.frequent = false,
-  });
-  final String name;
-  final String address;
-  final int purchases;
-  final String lastPurchase;
-  final IconData icon;
-  final bool frequent;
-}
-
-const _stores = [
-  _StorePreview(
-    'Walmart Supercenter',
-    'Av. Universidad #1205, Col. del Valle',
-    5,
-    'Hace 3 días',
-    Icons.storefront_outlined,
-    frequent: true,
-  ),
-  _StorePreview(
-    'Soriana Híper',
-    'Blvd. Insurgentes #450, Jardines del Prado',
-    8,
-    'Ayer',
-    Icons.storefront_outlined,
-    frequent: true,
-  ),
-  _StorePreview(
-    'Bodega Aurrerá Express',
-    'Calle 5 de Mayo #32, Centro',
-    3,
-    'Hace 1 sem',
-    Icons.shopping_basket_outlined,
-  ),
-  _StorePreview(
-    'Costco Wholesale',
-    'Calzada del Hueso #500, Coapa',
-    1,
-    'Hace 2 sem',
-    Icons.apartment_rounded,
-  ),
-];

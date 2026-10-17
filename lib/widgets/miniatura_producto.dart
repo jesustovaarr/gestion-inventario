@@ -1,13 +1,14 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 
-/// Illustrations used while a product does not have a local photograph.
-enum ProductThumbnailKind { milk, yogurt, tuna, rice, oil }
+// Tipos de miniatura
+enum ProductThumbnailKind { milk, yogurt, tuna, rice, oil, placeholder }
 
-/// A local product photograph with a self-contained illustrated fallback.
+// muestra la foto si existe o un ícono por defecto
 class ProductThumbnail extends StatelessWidget {
   const ProductThumbnail({
     super.key,
-    required this.kind,
+    this.kind = ProductThumbnailKind.placeholder,
     this.imagePath,
     this.size = 68,
   });
@@ -16,13 +17,24 @@ class ProductThumbnail extends StatelessWidget {
   final String? imagePath;
   final double size;
 
-  String get _label => switch (kind) {
-    ProductThumbnailKind.milk => 'Envase de leche',
-    ProductThumbnailKind.yogurt => 'Tarro de yogurt',
-    ProductThumbnailKind.tuna => 'Lata de atún',
-    ProductThumbnailKind.rice => 'Frasco de arroz',
-    ProductThumbnailKind.oil => 'Botella de aceite de oliva',
-  };
+  Widget _defaultIconPlaceholder() {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: const Color(0xFFF1F5F2),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2EBE5)),
+      ),
+      child: Center(
+        child: Icon(
+          Icons.inventory_2_outlined,
+          size: size * 0.45,
+          color: const Color(0xFF2E6347),
+        ),
+      ),
+    );
+  }
 
   Widget get _illustration => CustomPaint(
     painter: _ProductIllustrationPainter(kind),
@@ -31,23 +43,36 @@ class ProductThumbnail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Semantics(
-      image: true,
-      label: _label,
-      child: ExcludeSemantics(
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: SizedBox.square(
-            dimension: size,
-            child: imagePath == null
-                ? _illustration
-                : Image.asset(
-                    imagePath!,
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) => _illustration,
-                  ),
-          ),
-        ),
+    final bool hasValidImage = imagePath != null &&
+        imagePath!.trim().isNotEmpty &&
+        imagePath != 'assets/images/default_product.png';
+
+    Widget childWidget;
+    if (hasValidImage) {
+      if (imagePath!.startsWith('assets/')) {
+        childWidget = Image.asset(
+          imagePath!,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) => _defaultIconPlaceholder(),
+        );
+      } else {
+        childWidget = Image.file(
+          File(imagePath!),
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) => _defaultIconPlaceholder(),
+        );
+      }
+    } else if (kind != ProductThumbnailKind.placeholder) {
+      childWidget = _illustration;
+    } else {
+      childWidget = _defaultIconPlaceholder();
+    }
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: SizedBox.square(
+        dimension: size,
+        child: childWidget,
       ),
     );
   }
@@ -78,6 +103,8 @@ class _ProductIllustrationPainter extends CustomPainter {
         _paintRice(canvas);
       case ProductThumbnailKind.oil:
         _paintOil(canvas);
+      case ProductThumbnailKind.placeholder:
+        break;
     }
     canvas.restore();
   }
