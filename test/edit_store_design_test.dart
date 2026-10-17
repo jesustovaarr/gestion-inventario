@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:gestion_inventario/main_diseno.dart';
+import 'package:gestion_inventario/screens/pantalla_editar_tienda.dart';
 
 void main() {
-  testWidgets('Editar tienda abre desde el catálogo y se adapta al celular', (
+  testWidgets('Editar tienda se adapta al celular y permite editar/eliminar', (
     tester,
   ) async {
     tester.view.devicePixelRatio = 1;
@@ -12,30 +12,33 @@ void main() {
 
     for (final width in [320.0, 390.0, 600.0]) {
       tester.view.physicalSize = Size(width, 844);
-      await tester.pumpWidget(const AlacenaPreviewApp());
-      await tester.tap(find.text('Tiendas'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Opciones de Walmart Supercenter'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Editar tienda'));
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: EditStoreScreen(
+            storeId: 1,
+            storeName: 'Walmart Supercenter',
+            address: 'Av. Siempre Viva 123',
+            purchases: 0,
+            tipoTiendaId: 1,
+          ),
+        ),
+      );
       await tester.pumpAndSettle();
       expect(find.text('Editar tienda'), findsOneWidget);
       expect(find.text('Walmart Supercenter'), findsWidgets);
       expect(tester.takeException(), isNull);
 
-      // Desplaza desde el margen para evitar el scroll interno de las notas.
+      // Desplaza para ver los botones inferiores
       for (var step = 0; step < 5; step++) {
         await tester.dragFrom(const Offset(10, 650), const Offset(0, -400));
         await tester.pumpAndSettle();
       }
-      expect(find.text('Guardar cambios'), findsOneWidget);
-      expect(find.text('Bloqueado'), findsOneWidget);
+      expect(find.text('Guardar'), findsOneWidget);
+      expect(find.text('Eliminar tienda definitivamente'), findsOneWidget);
+      expect(find.text('Desactivar tienda temporalmente'), findsNothing);
+      expect(find.text('Ubicar en mapa'), findsNothing);
       expect(tester.takeException(), isNull);
 
-      await tester.tap(find.text('Cancelar'));
-      await tester.pumpAndSettle();
-      expect(find.text('CATÁLOGO DE TIENDAS'), findsOneWidget);
-      expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
     }
   });

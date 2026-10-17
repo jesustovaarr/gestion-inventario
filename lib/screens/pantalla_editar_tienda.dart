@@ -2,22 +2,28 @@ import 'package:flutter/material.dart';
 
 import 'formulario_tienda.dart';
 
-/// Entrada compatible con el catálogo; crear y editar comparten formulario.
 class EditStoreScreen extends StatelessWidget {
   const EditStoreScreen({
     super.key,
+    this.storeId,
     required this.storeName,
     required this.address,
     required this.purchases,
+    this.tipoTiendaId,
   });
+
+  final int? storeId;
   final String storeName;
   final String address;
   final int purchases;
+  final int? tipoTiendaId;
 
   @override
   Widget build(BuildContext context) => StoreFormScreen(
-    storeName: storeName,
-    address: address,
-    purchases: purchases,
-  );
+        storeId: storeId,
+        storeName: storeName,
+        address: address,
+        purchases: purchases,
+        tipoTiendaId: tipoTiendaId,
+      );
 }
