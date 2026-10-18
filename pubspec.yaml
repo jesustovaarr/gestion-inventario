@@ -40,6 +40,7 @@ dependencies:
   table_calendar: ^3.3.0
   badges: ^4.0.1
   flutter_slidable: ^4.0.3
+  image_picker: ^1.1.2
 
 dev_dependencies:
   flutter_test:

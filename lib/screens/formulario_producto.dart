@@ -1,3 +1,6 @@
+import '../models/borrador_formulario.dart';
+import '../widgets/selector_foto_producto.dart';
+
 import '../widgets/campos_presentacion_producto.dart';
 import '../widgets/editor_lotes_producto.dart';
 import '../widgets/historial_movimientos_producto.dart';
@@ -15,7 +18,6 @@ import '../widgets/encabezado_seccion.dart';
 import '../widgets/barra_navegacion_inferior.dart';
 import '../components/tema_alacena.dart';
 import '../presentation/modelos_vista_alacena.dart';
-import '../widgets/miniatura_producto.dart';
 import '../models/producto_model.dart';
 import '../models/lote_model.dart';
 import '../models/categoria_model.dart';
@@ -28,13 +30,17 @@ class ProductFormScreen extends StatefulWidget {
   const ProductFormScreen({
     super.key,
     this.product,
+    this.draft,
+    this.initialImagePath,
     this.catalogOnly = false,
     this.onSaved,
   });
   final PantryProductPreview? product;
+  final ProductFormDraft? draft;
+  final String? initialImagePath;
   final bool catalogOnly;
   final ValueChanged<int>? onSaved;
-  bool get isEditing => product != null;
+  bool get isEditing => product != null || draft?.productId != null;
 
   @override
   State<ProductFormScreen> createState() => _ProductFormScreenState();
@@ -74,33 +80,40 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   List<Tienda> _tiendas = [];
   int? _ultimaTiendaId;
   List<Categoria> _categoriasBD = [];
+  bool _borradorActivo = false;
 
   String _formatearNumero(double n) => formatearCantidad(n);
 
   @override
   void initState() {
     super.initState();
-    _name = widget.product?.name ?? '';
-    _imagen = widget.product?.imagePath;
-    _cargando = widget.isEditing;
-    _zone = widget.product?.storageZone ?? 'Nevera';
-    _category = widget.product?.category ?? 'Lácteos';
-    _unit = widget.product != null
-        ? (widget.product!.unit.toLowerCase() == 'lt'
-              ? 'L'
-              : widget.product!.unit)
-        : 'pza';
-    _minimum = widget.product?.minimumStock.toDouble() ?? 2.0;
-    _quantity = 1.0;
-    _packaging = widget.product?.packaging ?? PresentacionCompra.pieza;
-    _codeController = TextEditingController(text: widget.product?.code ?? '');
+    _name = widget.draft?.name ?? widget.product?.name ?? '';
+    _imagen = widget.initialImagePath ?? widget.draft?.imagePath ?? widget.product?.imagePath;
+    _cargando = widget.isEditing && widget.product?.id != null;
+    _zone = widget.draft?.zone ?? widget.product?.storageZone ?? 'Nevera';
+    _category = widget.draft?.category ?? widget.product?.category ?? 'Lácteos';
+    _unit = widget.draft?.unit ??
+        (widget.product != null
+            ? (widget.product!.unit.toLowerCase() == 'lt'
+                ? 'L'
+                : widget.product!.unit)
+            : 'pza');
+    _minimum = widget.draft?.minimum ?? widget.product?.minimumStock.toDouble() ?? 2.0;
+    _quantity = widget.draft?.quantity ?? 1.0;
+    _fechaCaducidad = widget.draft?.fechaCaducidad ?? _fechaCaducidad;
+    _packaging = widget.draft?.packaging != null
+        ? PresentacionCompra.leer(widget.draft!.packaging!)
+        : (widget.product?.packaging ?? PresentacionCompra.pieza);
+    _codeController = TextEditingController(text: widget.draft?.code ?? widget.product?.code ?? '');
     _contentController = TextEditingController(
-      text: formatearCantidad(widget.product?.packageContent ?? 1),
+      text: formatearCantidad(widget.draft?.packageContent ?? widget.product?.packageContent ?? 1),
     );
 
     _nameController = TextEditingController(text: _name);
     _precioController = TextEditingController(
-      text: widget.product?.price?.toStringAsFixed(2) ?? '',
+      text: widget.draft?.price != null
+          ? widget.draft!.price!.toStringAsFixed(2)
+          : (widget.product?.price?.toStringAsFixed(2) ?? ''),
     );
     _minimumController = TextEditingController(
       text: _formatearNumero(_minimum),
@@ -112,6 +125,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       text:
           '${_fechaCaducidad.day.toString().padLeft(2, '0')}/${_fechaCaducidad.month.toString().padLeft(2, '0')}/${_fechaCaducidad.year}',
     );
+    _ultimaTiendaId = widget.draft?.ultimaTiendaId;
     _cargarIniciales();
   }
 
@@ -221,7 +235,9 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
           _category = producto.categoriaNombre ?? _category;
           _unit = producto.unidadMedida == 'lt' ? 'L' : producto.unidadMedida;
           _zone = producto.zonaAlmacenamiento ?? _zone;
-          _imagen = producto.imagen.isEmpty ? null : producto.imagen;
+          if (widget.initialImagePath == null && widget.draft?.imagePath == null) {
+            _imagen = producto.imagen.isEmpty ? null : producto.imagen;
+          }
           _minimum = producto.stockMinimo;
           _minimumController.text = formatearCantidad(_minimum);
           _ultimaTiendaId = producto.ultimaTiendaId;
@@ -261,6 +277,42 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
         _dateController.text =
             '${picked.day.toString().padLeft(2, '0')}/${picked.month.toString().padLeft(2, '0')}/${picked.year}';
       });
+    }
+  }
+
+  Future<void> _guardarBorradorActual() async {
+    try {
+      _borradorActivo = true;
+      final parsedMin = double.tryParse(_minimumController.text) ?? _minimum;
+      final parsedQty = double.tryParse(_quantityController.text) ?? _quantity;
+      final parsedContent = double.tryParse(_contentController.text);
+      final parsedPrice = double.tryParse(_precioController.text);
+
+      await ProductFormDraft.guardar(
+        ProductFormDraft(
+          name: _nameController.text,
+          category: _category,
+          zone: _zone,
+          unit: _unit,
+          minimum: parsedMin,
+          quantity: parsedQty,
+          fechaCaducidad: _fechaCaducidad,
+          imagePath: _imagen,
+          productId: widget.product?.id ?? widget.draft?.productId,
+          code: _codeController.text,
+          packaging: _packaging.name,
+          packageContent: parsedContent,
+          price: parsedPrice,
+          ultimaTiendaId: _ultimaTiendaId,
+        ),
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _limpiarBorradorSiExiste() async {
+    if (_borradorActivo || widget.draft != null) {
+      _borradorActivo = false;
+      await ProductFormDraft.limpiar();
     }
   }
 
@@ -404,6 +456,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
               backgroundColor: PantryColors.green,
             ),
           );
+          await _limpiarBorradorSiExiste();
           Navigator.of(context).pop(true);
         }
       } else {
@@ -453,6 +506,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
               duration: const Duration(seconds: 3),
             ),
           );
+          await _limpiarBorradorSiExiste();
           Navigator.of(context).pop(true);
         }
       }
@@ -514,18 +568,13 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                             child: const Text('Reintentar'),
                           ),
                         ],
-                        if (_imagen == null || _imagen!.isEmpty)
-                          const _PhotoPlaceholder()
-                        else
-                          Center(
-                            child: ProductThumbnail(
-                              kind:
-                                  widget.product?.thumbnail ??
-                                  ProductThumbnailKind.placeholder,
-                              imagePath: _imagen,
-                              size: 130,
-                            ),
-                          ),
+                        ProductPhotoSelector(
+                          imagePath: _imagen,
+                          onImageChanged: (path) =>
+                              setState(() => _imagen = path ?? ''),
+                          onBeforeCamera: _guardarBorradorActual,
+                          onClearDraft: _limpiarBorradorSiExiste,
+                        ),
                         const SizedBox(height: 22),
                         const _ArticleLabel(
                           'Nombre del producto',
@@ -1122,14 +1171,6 @@ class _ArticleTag extends StatelessWidget {
       text,
       style: const TextStyle(fontSize: 9, color: PantryColors.green),
     ),
-  );
-}
-
-class _PhotoPlaceholder extends StatelessWidget {
-  const _PhotoPlaceholder();
-  @override
-  Widget build(BuildContext context) => const Center(
-    child: ProductThumbnail(kind: ProductThumbnailKind.placeholder, size: 100),
   );
 }
 
