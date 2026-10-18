@@ -1,5 +1,7 @@
 import '../models/borrador_formulario.dart';
+import '../models/datos_escaneo_producto.dart';
 import '../widgets/selector_foto_producto.dart';
+import '../widgets/campo_codigo_barras.dart';
 
 import '../widgets/campos_presentacion_producto.dart';
 import '../widgets/editor_lotes_producto.dart';
@@ -139,6 +141,32 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     _codeController.dispose();
     _contentController.dispose();
     super.dispose();
+  }
+
+  void _aplicarDatosCodigoBarras(DatosEscaneoProducto datos) {
+    setState(() {
+      if (!widget.isEditing || _name.trim().isEmpty) {
+        if (datos.nombre != null && datos.nombre!.isNotEmpty) {
+          _name = datos.nombre!;
+          _nameController.text = _name;
+        }
+      }
+      if (!widget.isEditing) {
+        if (datos.categoria != null) _category = datos.categoria!;
+        if (datos.presentacion != null) _packaging = datos.presentacion!;
+        if (datos.contenidoEnvase != null) {
+          _contentController.text = formatearCantidad(datos.contenidoEnvase!);
+        } else if (!_packaging.esEnvase) {
+          _contentController.text = '1';
+        }
+        if (datos.unidad != null) _unit = datos.unidad!;
+      }
+      if (datos.precioSugerido != null && datos.precioSugerido! > 0) {
+        if (!widget.isEditing || _precioController.text.trim().isEmpty) {
+          _precioController.text = datos.precioSugerido!.toStringAsFixed(2);
+        }
+      }
+    });
   }
 
   void _incrementarMinimo() {
@@ -597,6 +625,13 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                                 : null,
                             errorStyle: const TextStyle(fontSize: 10),
                           ),
+                        ),
+                        const SizedBox(height: 18),
+                        CampoCodigoBarras(
+                          controller: _codeController,
+                          isEditing: widget.isEditing,
+                          currentProductId: widget.product?.id ?? widget.draft?.productId,
+                          onProductResolved: _aplicarDatosCodigoBarras,
                         ),
                         const SizedBox(height: 18),
                         if (_tiendas.isNotEmpty && !widget.catalogOnly) ...[
