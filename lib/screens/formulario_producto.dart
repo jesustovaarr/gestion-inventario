@@ -1,5 +1,15 @@
+import '../widgets/campos_presentacion_producto.dart';
+import '../widgets/editor_lotes_producto.dart';
+import '../widgets/historial_movimientos_producto.dart';
+import '../database/daos/tienda_dao.dart';
+import '../models/tienda_model.dart';
+import '../utils/cantidades.dart';
+import '../utils/presentaciones.dart';
+import '../utils/importes.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:gestion_inventario/presentation/controlador_carrito.dart';
 
 import '../widgets/encabezado_seccion.dart';
 import '../widgets/barra_navegacion_inferior.dart';
@@ -15,8 +25,15 @@ import '../database/daos/categoria_dao.dart';
 
 // Formulario para dar de alta o editar productos
 class ProductFormScreen extends StatefulWidget {
-  const ProductFormScreen({super.key, this.product});
+  const ProductFormScreen({
+    super.key,
+    this.product,
+    this.catalogOnly = false,
+    this.onSaved,
+  });
   final PantryProductPreview? product;
+  final bool catalogOnly;
+  final ValueChanged<int>? onSaved;
   bool get isEditing => product != null;
 
   @override
@@ -29,9 +46,14 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   final _categoriaDao = CategoriaDao();
 
   late TextEditingController _nameController;
+  late TextEditingController _precioController;
   late TextEditingController _dateController;
   late TextEditingController _minimumController;
   late TextEditingController _quantityController;
+  late TextEditingController _codeController;
+  late TextEditingController _contentController;
+  PresentacionCompra _packaging = PresentacionCompra.pieza;
+  bool _eligiendoFecha = false;
 
   String _name = '';
   String _category = 'Lácteos';
@@ -43,47 +65,71 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   bool _reminder = true;
   DateTime _fechaCaducidad = DateTime.now().add(const Duration(days: 7));
   bool _guardando = false;
+  bool _cargando = false;
+  bool _lotesValidos = true;
+  String? _imagen;
+  String? _errorCarga;
+  List<Lote> _lotesEdicion = [];
+  int _versionLotes = 0;
+  List<Tienda> _tiendas = [];
+  int? _ultimaTiendaId;
   List<Categoria> _categoriasBD = [];
 
-  String _formatearNumero(double n) {
-    if (n == n.roundToDouble()) {
-      return n.toInt().toString();
-    }
-    return n.toString();
-  }
+  String _formatearNumero(double n) => formatearCantidad(n);
 
   @override
   void initState() {
     super.initState();
     _name = widget.product?.name ?? '';
+    _imagen = widget.product?.imagePath;
+    _cargando = widget.isEditing;
+    _zone = widget.product?.storageZone ?? 'Nevera';
     _category = widget.product?.category ?? 'Lácteos';
     _unit = widget.product != null
-        ? (widget.product!.unit.toLowerCase() == 'lt' ? 'L' : widget.product!.unit)
+        ? (widget.product!.unit.toLowerCase() == 'lt'
+              ? 'L'
+              : widget.product!.unit)
         : 'pza';
     _minimum = widget.product?.minimumStock.toDouble() ?? 2.0;
     _quantity = 1.0;
+    _packaging = widget.product?.packaging ?? PresentacionCompra.pieza;
+    _codeController = TextEditingController(text: widget.product?.code ?? '');
+    _contentController = TextEditingController(
+      text: formatearCantidad(widget.product?.packageContent ?? 1),
+    );
 
     _nameController = TextEditingController(text: _name);
-    _minimumController = TextEditingController(text: _formatearNumero(_minimum));
-    _quantityController = TextEditingController(text: _formatearNumero(_quantity));
+    _precioController = TextEditingController(
+      text: widget.product?.price?.toStringAsFixed(2) ?? '',
+    );
+    _minimumController = TextEditingController(
+      text: _formatearNumero(_minimum),
+    );
+    _quantityController = TextEditingController(
+      text: _formatearNumero(_quantity),
+    );
     _dateController = TextEditingController(
       text:
           '${_fechaCaducidad.day.toString().padLeft(2, '0')}/${_fechaCaducidad.month.toString().padLeft(2, '0')}/${_fechaCaducidad.year}',
     );
-    _cargarCategorias();
+    _cargarIniciales();
   }
 
   @override
   void dispose() {
     _nameController.dispose();
+    _precioController.dispose();
     _dateController.dispose();
     _minimumController.dispose();
     _quantityController.dispose();
+    _codeController.dispose();
+    _contentController.dispose();
     super.dispose();
   }
 
   void _incrementarMinimo() {
-    final parsed = double.tryParse(_minimumController.text) ?? _minimum;
+    final parsed =
+        leerCantidad(_minimumController.text, permiteCero: true) ?? _minimum;
     final nuevo = parsed + 1.0;
     setState(() {
       _minimum = nuevo;
@@ -92,7 +138,8 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   }
 
   void _decrementarMinimo() {
-    final parsed = double.tryParse(_minimumController.text) ?? _minimum;
+    final parsed =
+        leerCantidad(_minimumController.text, permiteCero: true) ?? _minimum;
     if (parsed > 1.0) {
       final nuevo = parsed - 1.0;
       setState(() {
@@ -109,7 +156,8 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   }
 
   void _incrementarCantidad() {
-    final parsed = double.tryParse(_quantityController.text) ?? _quantity;
+    final parsed =
+        leerCantidad(_quantityController.text, permiteCero: true) ?? _quantity;
     final nuevo = parsed + 1.0;
     setState(() {
       _quantity = nuevo;
@@ -118,7 +166,8 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   }
 
   void _decrementarCantidad() {
-    final parsed = double.tryParse(_quantityController.text) ?? _quantity;
+    final parsed =
+        leerCantidad(_quantityController.text, permiteCero: true) ?? _quantity;
     if (parsed > 1.0) {
       final nuevo = parsed - 1.0;
       setState(() {
@@ -126,7 +175,10 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
         _quantityController.text = _formatearNumero(nuevo);
       });
     } else if (parsed > 0.0) {
-      final nuevo = (parsed - 0.5).clamp(0.0, double.infinity);
+      final nuevo = (parsed - (_packaging.esEnvase ? 1 : 0.5)).clamp(
+        0.0,
+        double.infinity,
+      );
       setState(() {
         _quantity = nuevo;
         _quantityController.text = _formatearNumero(nuevo);
@@ -134,10 +186,58 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     }
   }
 
-  Future<void> _cargarCategorias() async {
-    final cats = await _categoriaDao.obtenerTodas();
-    if (mounted) {
-      setState(() => _categoriasBD = cats);
+  Future<void> _cargarIniciales() async {
+    try {
+      final cats = await _categoriaDao.obtenerTodas();
+      final tiendas = await TiendaDao().obtenerTodas();
+      final productId = widget.product?.id;
+      final producto = productId == null
+          ? null
+          : await _productoDao.obtenerPorId(productId);
+      if (widget.isEditing && producto == null) {
+        throw StateError('Producto no encontrado');
+      }
+      final lotes = productId == null
+          ? <Lote>[]
+          : await _loteDao.obtenerLotesPorProducto(productId);
+      if (!mounted) return;
+      setState(() {
+        _categoriasBD = cats;
+        _tiendas = tiendas;
+        _lotesEdicion = lotes.where((l) => l.cantidad > 0).toList();
+        _versionLotes++;
+        if (producto != null) {
+          _name = producto.nombre;
+          _nameController.text = _name;
+          _codeController.text = producto.codigo ?? '';
+          _packaging = PresentacionCompra.leer(producto.presentacion);
+          _contentController.text = formatearCantidad(producto.contenidoEnvase);
+          final precioBase = producto.precio;
+          final contenido = leerCantidad(_contentController.text) ?? 1;
+          _precioController.text = precioBase == null
+              ? ''
+              : (precioBase * (_packaging.esEnvase ? contenido : 1))
+                    .toStringAsFixed(2);
+          _category = producto.categoriaNombre ?? _category;
+          _unit = producto.unidadMedida == 'lt' ? 'L' : producto.unidadMedida;
+          _zone = producto.zonaAlmacenamiento ?? _zone;
+          _imagen = producto.imagen.isEmpty ? null : producto.imagen;
+          _minimum = producto.stockMinimo;
+          _minimumController.text = formatearCantidad(_minimum);
+          _ultimaTiendaId = producto.ultimaTiendaId;
+        }
+        _cargando = false;
+        _errorCarga = null;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _cargando = false;
+          if (widget.isEditing) {
+            _errorCarga = 'No se pudieron cargar los datos del producto.';
+          }
+        });
+      }
     }
   }
 
@@ -146,13 +246,16 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   }
 
   Future<void> _seleccionarFecha() async {
+    if (_eligiendoFecha) return;
+    _eligiendoFecha = true;
     final picked = await showDatePicker(
       context: context,
       initialDate: _fechaCaducidad,
       firstDate: DateTime(2020),
       lastDate: DateTime(2035),
     );
-    if (picked != null) {
+    _eligiendoFecha = false;
+    if (picked != null && mounted) {
       setState(() {
         _fechaCaducidad = picked;
         _dateController.text =
@@ -162,8 +265,47 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   }
 
   Future<void> _guardar() async {
-    final parsedMin = double.tryParse(_minimumController.text) ?? _minimum;
-    final parsedQty = double.tryParse(_quantityController.text) ?? _quantity;
+    if (_guardando || _cargando || _errorCarga != null) return;
+    final content = leerCantidad(_contentController.text);
+    if (_packaging.esEnvase && content == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Indica el contenido de cada envase.')),
+      );
+      return;
+    }
+    if (!_lotesValidos) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Revisa las cantidades de los lotes.')),
+      );
+      return;
+    }
+    final parsedMin = leerCantidad(_minimumController.text);
+    final cantidadCapturada = leerCantidad(
+      _quantityController.text,
+      permiteCero: true,
+    );
+    final parsedQty = cantidadCapturada == null
+        ? null
+        : normalizarCantidad(
+            cantidadCapturada * (_packaging.esEnvase ? content ?? 1 : 1),
+          );
+    if (parsedMin == null ||
+        (!widget.isEditing &&
+            !widget.catalogOnly &&
+            (parsedQty == null ||
+                !cantidadValida(parsedQty, permiteCero: true) ||
+                (_packaging.esEnvase &&
+                    cantidadCapturada !=
+                        cantidadCapturada?.truncateToDouble())))) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Escribe cantidades válidas de hasta 999999, con máximo tres decimales. El mínimo debe ser mayor que cero.',
+          ),
+        ),
+      );
+      return;
+    }
 
     if (_name.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -185,9 +327,31 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       return;
     }
 
+    final textoPrecio = _precioController.text.trim();
+    final precioCentavos = leerPrecioCentavos(textoPrecio);
+    if (textoPrecio.isNotEmpty && precioCentavos == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Escribe un precio válido mayor o igual a 0'),
+        ),
+      );
+      return;
+    }
+    final precio = precioCentavos == null
+        ? null
+        : precioCentavos / 100 / (_packaging.esEnvase ? content! : 1);
+
     setState(() => _guardando = true);
 
     try {
+      final code = _codeController.text.trim();
+      if (code.isNotEmpty) {
+        final existing = await _productoDao.obtenerPorCodigo(code);
+        if (existing != null && existing.id != widget.product?.id) {
+          throw StateError('Ese código ya pertenece a ${existing.nombre}.');
+        }
+      }
+      final imagenGuardada = _imagen ?? '';
       int catId = 1;
       final encontrada = _categoriasBD.where(
         (c) => c.nombre.toLowerCase() == _category.toLowerCase(),
@@ -198,19 +362,40 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
         catId = await _categoriaDao.insertar(_category);
       }
 
-      final unidadParaBD = _unit.toLowerCase() == 'l' ? 'lt' : _unit.toLowerCase();
+      final unidadParaBD = _unit.toLowerCase() == 'l'
+          ? 'lt'
+          : _unit.toLowerCase();
 
       if (widget.isEditing) {
-        final prodExistente = await _productoDao.obtenerPorId(widget.product!.id ?? 1);
         final actualizado = Producto(
           id: widget.product!.id,
           nombre: _name.trim(),
+          zonaAlmacenamiento: _zone,
+          precio: precio,
+          codigo: code.isEmpty ? null : code,
+          presentacion: _packaging.name,
+          contenidoEnvase: _packaging.esEnvase ? content! : 1,
           unidadMedida: unidadParaBD,
           stockMinimo: parsedMin,
           categoriaId: catId,
-          ultimaTiendaId: prodExistente?.ultimaTiendaId,
+          ultimaTiendaId: _ultimaTiendaId,
+          imagen: imagenGuardada,
         );
-        await _productoDao.actualizar(actualizado);
+        await _productoDao.guardarConLotes(
+          actualizado,
+          _lotesEdicion
+              .map(
+                (l) => l.copyWith(
+                  presentacion: _packaging,
+                  contenidoEnvase: _packaging.esEnvase ? content! : 1,
+                ),
+              )
+              .toList(),
+        );
+        widget.onSaved?.call(actualizado.id!);
+
+        if (!mounted) return;
+        await ShoppingListsPreviewScope.maybeOf(context)?.cargarDesdeBD();
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -223,28 +408,39 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
         }
       } else {
         final nuevoProd = Producto(
+          imagen: imagenGuardada,
+          ultimaTiendaId: _ultimaTiendaId,
           nombre: _name.trim(),
+          zonaAlmacenamiento: _zone,
+          precio: precio,
+          codigo: code.isEmpty ? null : code,
+          presentacion: _packaging.name,
+          contenidoEnvase: _packaging.esEnvase ? content! : 1,
           unidadMedida: unidadParaBD,
           stockMinimo: parsedMin,
           categoriaId: catId,
         );
         final nuevoId = await _productoDao.insertar(nuevoProd);
 
-        if (parsedQty > 0) {
+        if (!widget.catalogOnly && (parsedQty ?? 0) > 0) {
           await _loteDao.insertarLote(
             Lote(
               productoId: nuevoId,
-              cantidad: parsedQty,
+              cantidad: parsedQty!,
               fechaCaducidad: _formatearFechaIso(_fechaCaducidad),
               alarmaActiva: _reminder ? 1 : 0,
+              horaAviso: _time,
+              presentacion: _packaging,
+              contenidoEnvase: _packaging.esEnvase ? content! : 1,
             ),
           );
         }
 
+        widget.onSaved?.call(nuevoId);
         if (mounted) {
           String mensaje;
-          if (parsedQty > 0 && parsedQty > parsedMin) {
-            mensaje = 'La cantidad del lote supera el stock mínimo definido';
+          if (widget.catalogOnly) {
+            mensaje = 'Producto agregado al catálogo';
           } else {
             mensaje = 'Producto "$_name" guardado correctamente';
           }
@@ -264,7 +460,11 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error al guardar: $e'),
+            content: Text(
+              e is StateError || e is ArgumentError
+                  ? e.toString()
+                  : 'No se pudo guardar el producto. Inténtalo de nuevo.',
+            ),
             backgroundColor: PantryColors.red,
           ),
         );
@@ -303,84 +503,29 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                     padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
                     sliver: SliverList.list(
                       children: [
-                        _ArticlePanel(
-                          child: Row(
-                            children: [
-                              const Icon(
-                                Icons.qr_code_scanner_rounded,
-                                size: 26,
-                                color: PantryColors.green,
-                              ),
-                              const SizedBox(width: 12),
-                              const Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      '¿Tienes el código de barras?',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                    SizedBox(height: 4),
-                                    Text(
-                                      'Rellena los datos en 1 segundo',
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        color: PantryColors.muted,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              FilledButton.icon(
-                                onPressed: () {},
-                                icon: const Icon(
-                                  Icons.document_scanner_outlined,
-                                  size: 13,
-                                ),
-                                label: const Text(
-                                  'Escanear',
-                                  style: TextStyle(fontSize: 10),
-                                ),
-                                style: FilledButton.styleFrom(
-                                  minimumSize: const Size(0, 32),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                  ),
-                                ),
-                              ),
-                            ],
+                        if (_cargando) const LinearProgressIndicator(),
+                        if (_errorCarga != null) ...[
+                          Text(_errorCarga!),
+                          TextButton(
+                            onPressed: () {
+                              setState(() => _cargando = true);
+                              _cargarIniciales();
+                            },
+                            child: const Text('Reintentar'),
                           ),
-                        ),
-                        const SizedBox(height: 22),
-                        if (widget.product == null)
+                        ],
+                        if (_imagen == null || _imagen!.isEmpty)
                           const _PhotoPlaceholder()
                         else
                           Center(
                             child: ProductThumbnail(
-                              kind: widget.product!.thumbnail,
-                              imagePath: widget.product!.imagePath,
+                              kind:
+                                  widget.product?.thumbnail ??
+                                  ProductThumbnailKind.placeholder,
+                              imagePath: _imagen,
                               size: 130,
                             ),
                           ),
-                        const SizedBox(height: 8),
-                        Wrap(
-                          alignment: WrapAlignment.center,
-                          spacing: 8,
-                          children: [
-                            _PhotoButton(
-                              label: 'Cámara',
-                              icon: Icons.camera_alt_outlined,
-                            ),
-                            _PhotoButton(
-                              label: 'Galería',
-                              icon: Icons.photo_library_outlined,
-                            ),
-                          ],
-                        ),
                         const SizedBox(height: 22),
                         const _ArticleLabel(
                           'Nombre del producto',
@@ -405,28 +550,54 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                           ),
                         ),
                         const SizedBox(height: 18),
+                        if (_tiendas.isNotEmpty && !widget.catalogOnly) ...[
+                          DropdownButtonFormField<int>(
+                            initialValue: _ultimaTiendaId,
+                            decoration: const InputDecoration(
+                              labelText: 'Última tienda',
+                            ),
+                            items: [
+                              const DropdownMenuItem<int>(
+                                value: null,
+                                child: Text('Sin tienda'),
+                              ),
+                              ..._tiendas.map(
+                                (t) => DropdownMenuItem(
+                                  value: t.id,
+                                  child: Text(t.nombre),
+                                ),
+                              ),
+                            ],
+                            onChanged: (id) =>
+                                setState(() => _ultimaTiendaId = id),
+                          ),
+                          const SizedBox(height: 18),
+                        ],
                         const _ArticleLabel('Categoría', required: true),
                         const SizedBox(height: 9),
                         SingleChildScrollView(
                           scrollDirection: Axis.horizontal,
                           child: Row(
                             children: [
-                              for (final category in [
-                                if (widget.product != null &&
-                                    ![
-                                      'Lácteos',
-                                      'Granos',
-                                      'Enlatados',
-                                      'Otros',
-                                    ].contains(widget.product!.category))
+                              for (final category in <(String, IconData)>[
+                                for (final name in <String>{
+                                  ..._categoriasBD.map((c) => c.nombre),
+                                  _category,
+                                  'Lácteos',
+                                  'Granos',
+                                  'Enlatados',
+                                  'Otros',
+                                })
                                   (
-                                    widget.product!.category,
-                                    Icons.category_outlined,
+                                    name,
+                                    name == 'Lácteos'
+                                        ? Icons.kitchen_outlined
+                                        : name == 'Granos'
+                                        ? Icons.grain_rounded
+                                        : name == 'Enlatados'
+                                        ? Icons.inventory_2_outlined
+                                        : Icons.category_outlined,
                                   ),
-                                ('Lácteos', Icons.kitchen_outlined),
-                                ('Granos', Icons.grain_rounded),
-                                ('Enlatados', Icons.inventory_2_outlined),
-                                ('Otros', Icons.category_outlined),
                               ])
                                 Padding(
                                   padding: const EdgeInsets.only(right: 6),
@@ -458,124 +629,63 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                           ),
                         ),
                         const SizedBox(height: 18),
-                        LayoutBuilder(
-                          builder: (context, constraints) {
-                            final units = Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const _ArticleLabel(
-                                  'Unidad de medida',
-                                  required: true,
-                                ),
-                                const SizedBox(height: 10),
-                                Container(
-                                  decoration: BoxDecoration(
-                                    color: PantryColors.greenLight,
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      for (final unit in [
-                                        'pza',
-                                        'kg',
-                                        'L',
-                                        'g',
-                                        'ml',
-                                      ])
-                                        Expanded(
-                                          child: InkWell(
-                                            onTap: () =>
-                                                setState(() => _unit = unit),
-                                            borderRadius: BorderRadius.circular(
-                                              9,
-                                            ),
-                                            child: Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                    vertical: 11,
-                                                  ),
-                                              decoration: BoxDecoration(
-                                                color: _unit == unit
-                                                    ? PantryColors.green
-                                                    : Colors.transparent,
-                                                borderRadius:
-                                                    BorderRadius.circular(9),
-                                              ),
-                                              child: Text(
-                                                unit,
-                                                textAlign: TextAlign.center,
-                                                style: TextStyle(
-                                                  fontSize: 11,
-                                                  fontWeight: FontWeight.w600,
-                                                  color: _unit == unit
-                                                      ? Colors.white
-                                                      : PantryColors.ink,
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                const Text(
-                                  'Presentación básica',
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    color: PantryColors.muted,
-                                  ),
-                                ),
-                              ],
-                            );
-                            final minimum = Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const _ArticleLabel(
-                                  'Stock mínimo',
-                                  required: true,
-                                ),
-                                const SizedBox(height: 10),
-                                _QuantityControl(
-                                  controller: _minimumController,
-                                  onDecrease: _decrementarMinimo,
-                                  onIncrease: _incrementarMinimo,
-                                  onChanged: (val) => setState(() => _minimum = val),
-                                  label: 'stock mínimo',
-                                ),
-                                const SizedBox(height: 6),
-                                if (_minimum <= 0)
-                                  const Text(
-                                    'Ingresa un valor mayor a 0',
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      color: PantryColors.red,
-                                    ),
-                                  ),
-                              ],
-                            );
-                            if (constraints.maxWidth < 350) {
-                              return Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  units,
-                                  const SizedBox(height: 18),
-                                  minimum,
-                                ],
-                              );
-                            }
-                            return Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Expanded(child: units),
-                                const SizedBox(width: 16),
-                                Expanded(child: minimum),
-                              ],
-                            );
-                          },
+                        ProductPresentationFields(
+                          packaging: _packaging,
+                          unit: _unit,
+                          contentController: _contentController,
+                          onPackagingChanged: (p) =>
+                              setState(() => _packaging = p),
+                          onUnitChanged: (unit) => setState(() => _unit = unit),
+                          onContentChanged: (_) => setState(() {}),
                         ),
+                        const SizedBox(height: 18),
+                        if (!widget.catalogOnly || widget.isEditing) ...[
+                          _ArticleLabel(
+                            'Precio de referencia por ${_packaging.esEnvase ? _packaging.singular.toLowerCase() : unidadVisible(_unit)}',
+                          ),
+                          const SizedBox(height: 8),
+                          TextFormField(
+                            controller: _precioController,
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                            decoration: _articleInput().copyWith(
+                              prefixText: '\$ ',
+                              hintText: 'Ej. 25 o 25.50',
+                              helperText:
+                                  'Opcional. Puedes usar punto o coma decimal.',
+                            ),
+                          ),
+                          const SizedBox(height: 18),
+                        ],
+                        const _ArticleLabel('Stock mínimo', required: true),
+                        const SizedBox(height: 10),
+                        _QuantityControl(
+                          controller: _minimumController,
+                          onDecrease: _decrementarMinimo,
+                          onIncrease: _incrementarMinimo,
+                          onChanged: (val) => setState(() => _minimum = val),
+                          label: 'stock mínimo',
+                          unit: unidadVisible(_unit),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Expresado en ${unidadVisible(_unit)}, igual que las existencias.',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: PantryColors.muted,
+                          ),
+                        ),
+                        if (_minimum <= 0)
+                          const Text(
+                            'Ingresa un valor mayor a 0',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: PantryColors.red,
+                            ),
+                          ),
                         const SizedBox(height: 22),
-                        if (!widget.isEditing)
+                        if (!widget.isEditing && !widget.catalogOnly)
                           _ArticlePanel(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -633,10 +743,13 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                                 const SizedBox(height: 9),
                                 _QuantityControl(
                                   controller: _quantityController,
-                                  unit: _unit,
+                                  unit: _packaging.esEnvase
+                                      ? _packaging.plural
+                                      : _unit,
                                   onDecrease: _decrementarCantidad,
                                   onIncrease: _incrementarCantidad,
-                                  onChanged: (val) => setState(() => _quantity = val),
+                                  onChanged: (val) =>
+                                      setState(() => _quantity = val),
                                   label: 'cantidad inicial',
                                 ),
                                 const SizedBox(height: 6),
@@ -794,17 +907,33 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                               ],
                             ),
                           ),
-                        if (widget.isEditing)
-                          const _ArticlePanel(
-                            child: Text(
-                              'Las existencias y las fechas se administran desde los lotes del producto.',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: PantryColors.muted,
-                                height: 1.5,
-                              ),
-                            ),
+                        if (widget.isEditing &&
+                            !widget.catalogOnly &&
+                            !_cargando &&
+                            _errorCarga == null)
+                          ProductLotsEditor(
+                            key: ValueKey(_versionLotes),
+                            productoId: widget.product!.id!,
+                            lotes: _lotesEdicion,
+                            unit: _unit,
+                            onChanged: (lotes) => setState(() {
+                              _lotesValidos = lotes != null;
+                              if (lotes != null) _lotesEdicion = lotes;
+                            }),
+                            defaultPackaging: _packaging,
+                            defaultContent:
+                                leerCantidad(_contentController.text) ?? 1,
                           ),
+                        if (widget.isEditing &&
+                            !widget.catalogOnly &&
+                            !_cargando &&
+                            _errorCarga == null) ...[
+                          const SizedBox(height: 16),
+                          ProductMovementHistory(
+                            productoId: widget.product!.id!,
+                            unit: _unit,
+                          ),
+                        ],
                         const SizedBox(height: 20),
                         const Row(
                           children: [
@@ -877,7 +1006,13 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                         ),
                         const SizedBox(height: 24),
                         FilledButton(
-                          onPressed: _guardando ? null : _guardar,
+                          onPressed:
+                              _guardando ||
+                                  _cargando ||
+                                  _errorCarga != null ||
+                                  !_lotesValidos
+                              ? null
+                              : _guardar,
                           style: FilledButton.styleFrom(
                             minimumSize: const Size.fromHeight(48),
                             shape: RoundedRectangleBorder(
@@ -993,68 +1128,8 @@ class _ArticleTag extends StatelessWidget {
 class _PhotoPlaceholder extends StatelessWidget {
   const _PhotoPlaceholder();
   @override
-  Widget build(BuildContext context) => Center(
-    child: SizedBox(
-      width: 140,
-      height: 140,
-      child: Stack(
-        children: [
-          Container(
-            width: 130,
-            height: 130,
-            decoration: BoxDecoration(
-              color: const Color(0xFFE1ECE4),
-              borderRadius: BorderRadius.circular(22),
-            ),
-            child: const Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                CircleAvatar(
-                  radius: 26,
-                  backgroundColor: PantryColors.background,
-                  child: Icon(
-                    Icons.add_a_photo_outlined,
-                    size: 26,
-                    color: PantryColors.green,
-                  ),
-                ),
-                SizedBox(height: 10),
-                Text(
-                  'Foto opcional',
-                  style: TextStyle(fontSize: 10, color: PantryColors.muted),
-                ),
-              ],
-            ),
-          ),
-          Positioned(
-            right: 0,
-            bottom: 0,
-            child: IconButton.filled(
-              onPressed: () {},
-              tooltip: 'Editar foto',
-              icon: const Icon(Icons.edit_outlined, size: 16),
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
-}
-
-class _PhotoButton extends StatelessWidget {
-  const _PhotoButton({required this.label, required this.icon});
-  final String label;
-  final IconData icon;
-  @override
-  Widget build(BuildContext context) => FilledButton.tonalIcon(
-    onPressed: () {},
-    icon: Icon(icon, size: 14),
-    label: Text(label, style: const TextStyle(fontSize: 11)),
-    style: FilledButton.styleFrom(
-      backgroundColor: PantryColors.greenLight,
-      foregroundColor: PantryColors.green,
-      minimumSize: const Size(0, 34),
-    ),
+  Widget build(BuildContext context) => const Center(
+    child: ProductThumbnail(kind: ProductThumbnailKind.placeholder, size: 100),
   );
 }
 
@@ -1101,8 +1176,11 @@ class _QuantityControl extends StatelessWidget {
             children: [
               Flexible(
                 child: TextField(
+                  key: ValueKey('quantity-$label'),
                   controller: controller,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     fontSize: 14,
@@ -1110,7 +1188,13 @@ class _QuantityControl extends StatelessWidget {
                     color: PantryColors.ink,
                   ),
                   inputFormatters: [
-                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
+                    TextInputFormatter.withFunction(
+                      (oldValue, newValue) =>
+                          RegExp(r'^\d*(?:[.,]\d{0,3})?$')
+                              .hasMatch(newValue.text)
+                          ? newValue
+                          : oldValue,
+                    ),
                   ],
                   decoration: const InputDecoration(
                     isDense: true,
@@ -1120,7 +1204,7 @@ class _QuantityControl extends StatelessWidget {
                     focusedBorder: InputBorder.none,
                   ),
                   onChanged: (text) {
-                    final valor = double.tryParse(text) ?? 0.0;
+                    final valor = leerCantidad(text, permiteCero: true) ?? 0.0;
                     onChanged(valor);
                   },
                 ),

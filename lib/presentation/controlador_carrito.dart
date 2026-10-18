@@ -175,7 +175,10 @@ class ShoppingListsPreviewScope
     required super.child,
   }) : super(notifier: controller);
 
-  static ShoppingListsPreviewController of(BuildContext context) => context
-      .dependOnInheritedWidgetOfExactType<ShoppingListsPreviewScope>()!
-      .notifier!;
+  static ShoppingListsPreviewController? maybeOf(BuildContext context) =>
+      context
+          .dependOnInheritedWidgetOfExactType<ShoppingListsPreviewScope>()
+          ?.notifier;
+  static ShoppingListsPreviewController of(BuildContext context) =>
+      maybeOf(context)!;
 }

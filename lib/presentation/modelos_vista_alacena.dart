@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../utils/cantidades.dart';
+import '../utils/presentaciones.dart';
+
 import '../components/tema_alacena.dart';
 import '../widgets/miniatura_producto.dart';
 import '../models/producto_model.dart';
+import '../models/lote_model.dart';
 import '../database/daos/producto_dao.dart';
 
 // Estados de presentación visual para productos de la alacena
@@ -24,6 +28,12 @@ enum PantryPreviewStatus {
     Icons.warning_amber_rounded,
     PantryColors.amber,
     PantryColors.amberLight,
+  ),
+  empty(
+    'Sin existencias',
+    Icons.inventory_2_outlined,
+    Color(0xFF526C76),
+    Color(0xFFE7EEF0),
   ),
   healthy(
     'En orden',
@@ -53,6 +63,16 @@ class PantryProductPreview {
     this.imagePath,
     this.unit = 'pza',
     this.minimumStock = 2,
+    this.price,
+    this.code,
+    this.packaging = PresentacionCompra.granel,
+    this.packageContent = 1,
+    this.storageZone,
+    this.expiryDate,
+    this.lotId,
+    this.lotQuantity = 0,
+    this.totalStock,
+    this.activeLots = const [],
   });
 
   final int? id;
@@ -64,7 +84,70 @@ class PantryProductPreview {
   final ProductThumbnailKind thumbnail;
   final String? imagePath;
   final String unit;
-  final int minimumStock;
+  final double minimumStock;
+  final double? price;
+  final String? code;
+  final PresentacionCompra packaging;
+  final double packageContent;
+  final String? storageZone;
+  final String? expiryDate;
+  final int? lotId;
+  final double lotQuantity;
+  final double? totalStock;
+  final List<Lote> activeLots;
+  String get key => (id ?? name).toString();
+  String get presentationLabel =>
+      etiquetaPresentacion(packaging, packageContent, unit);
+  double get availableQuantity => totalStock ?? lotQuantity;
+  String get totalStockLabel =>
+      '${formatearContenido(availableQuantity, unit)} en total';
+  String get stockLabel {
+    if (!hasStock) {
+      return packaging.esEnvase
+          ? '0 ${packaging.plural} en stock'
+          : '0 ${unidadVisible(unit)} en stock';
+    }
+    return describirExistencia(
+      cantidad: availableQuantity,
+      unidad: unit,
+      presentacion: packaging,
+      contenidoEnvase: packageContent,
+    );
+  }
+
+  String? get stockDetail =>
+      hasStock && packaging.esEnvase ? totalStockLabel : null;
+
+  int? get daysToExpiry {
+    final date = DateTime.tryParse(expiryDate ?? '');
+    if (date == null) return null;
+    final now = DateTime.now();
+    return DateTime(
+      date.year,
+      date.month,
+      date.day,
+    ).difference(DateTime(now.year, now.month, now.day)).inDays;
+  }
+
+  bool get isExpired => (daysToExpiry ?? 0) < 0;
+  String get expiryLabel {
+    final days = daysToExpiry;
+    if (days == null) return 'Sin fecha de caducidad';
+    if (days == -1) return 'Caducado ayer';
+    if (days < 0) return 'Caducado hace ${-days} días';
+    if (days == 0) return 'Caduca hoy';
+    if (days == 1) return 'Caduca mañana';
+    return 'Caduca en $days días';
+  }
+
+  String get formattedExpiry {
+    final date = DateTime.tryParse(expiryDate ?? '');
+    if (date == null) return 'Caducidad sin registrar';
+    return 'Cad: ${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
+  }
+
+  String get lotQuantityLabel => '${formatearCantidad(lotQuantity)} $unit';
+  bool get hasStock => normalizarCantidad(availableQuantity) > 0;
 }
 
 // Agrupación visual de productos por estado en la pantalla de inicio
@@ -85,34 +168,36 @@ class PantrySectionPreview {
 // Extensión para mapear entidades reales de SQLite Producto a modelos de vista
 extension ProductoToPreview on Producto {
   PantryProductPreview toPreview() {
-    PantryPreviewStatus s;
-    switch (estado) {
-      case EstadoProducto.caducado:
-        s = PantryPreviewStatus.expired;
-        break;
-      case EstadoProducto.porCaducar:
-        s = PantryPreviewStatus.expiring;
-        break;
-      case EstadoProducto.porAgotarse:
-      case EstadoProducto.agotado:
-        s = PantryPreviewStatus.lowStock;
-        break;
-      case EstadoProducto.enOrden:
-        s = PantryPreviewStatus.healthy;
-        break;
-    }
-
+    const estados = {
+      EstadoProducto.caducado: PantryPreviewStatus.expired,
+      EstadoProducto.agotado: PantryPreviewStatus.empty,
+      EstadoProducto.porCaducar: PantryPreviewStatus.expiring,
+      EstadoProducto.porAgotarse: PantryPreviewStatus.lowStock,
+      EstadoProducto.enOrden: PantryPreviewStatus.healthy,
+    };
     return PantryProductPreview(
       id: id,
       name: nombre,
       category: categoriaNombre ?? 'Abarrotes',
-      status: s,
-      note: 'Stock: ${stockActual.toInt()} $unidadMedida (Mínimo: ${stockMinimo.toInt()})',
-      quantity: '${stockActual.toInt()} $unidadMedida',
+      status: estados[estado]!,
+      note: 'Stock: ${formatearCantidad(stockActual)} $unidadMedida',
+      quantity: '${formatearCantidad(stockActual)} $unidadMedida',
       thumbnail: ProductThumbnailKind.placeholder,
-      imagePath: (imagen.isNotEmpty && imagen != 'assets/images/default_product.png') ? imagen : null,
+      imagePath: imagen.isEmpty || imagen == 'assets/images/default_product.png'
+          ? null
+          : imagen,
       unit: unidadMedida,
-      minimumStock: stockMinimo.toInt(),
+      minimumStock: stockMinimo,
+      price: precio,
+      code: codigo,
+      packaging: PresentacionCompra.leer(presentacion),
+      packageContent: contenidoEnvase,
+      storageZone: zonaAlmacenamiento,
+      expiryDate: proximaCaducidad,
+      lotId: primerLoteId,
+      lotQuantity: cantidadPrimerLote,
+      totalStock: stockActual,
+      activeLots: lotesActivos,
     );
   }
 }
@@ -122,55 +207,12 @@ Future<List<PantrySectionPreview>> obtenerSeccionesDesdeBD() async {
   final productos = await ProductoDao().obtenerConStock();
   if (productos.isEmpty) return [];
 
-  final caducados = productos
-      .where((p) => p.estado == EstadoProducto.caducado)
-      .map((p) => p.toPreview())
-      .toList();
-  final porCaducar = productos
-      .where((p) => p.estado == EstadoProducto.porCaducar)
-      .map((p) => p.toPreview())
-      .toList();
-  final porAgotarse = productos
-      .where((p) => p.estado == EstadoProducto.porAgotarse || p.estado == EstadoProducto.agotado)
-      .map((p) => p.toPreview())
-      .toList();
-  final enOrden = productos
-      .where((p) => p.estado == EstadoProducto.enOrden)
-      .map((p) => p.toPreview())
-      .toList();
-
-  final List<PantrySectionPreview> secciones = [];
-  if (caducados.isNotEmpty) {
-    secciones.add(PantrySectionPreview(
-      title: 'Caducados',
-      caption: '${caducados.length} para desechar',
-      status: PantryPreviewStatus.expired,
-      products: caducados,
-    ));
-  }
-  if (porCaducar.isNotEmpty) {
-    secciones.add(PantrySectionPreview(
-      title: 'Por caducar',
-      caption: '${porCaducar.length} en 3 días',
-      status: PantryPreviewStatus.expiring,
-      products: porCaducar,
-    ));
-  }
-  if (porAgotarse.isNotEmpty) {
-    secciones.add(PantrySectionPreview(
-      title: 'Por agotarse',
-      caption: '${porAgotarse.length} por reponer',
-      status: PantryPreviewStatus.lowStock,
-      products: porAgotarse,
-    ));
-  }
-  if (enOrden.isNotEmpty) {
-    secciones.add(PantrySectionPreview(
-      title: 'En orden',
-      caption: '${enOrden.length} con stock suficiente',
+  return [
+    PantrySectionPreview(
+      title: 'Productos',
+      caption: 'Primero los que caducan antes',
       status: PantryPreviewStatus.healthy,
-      products: enOrden,
-    ));
-  }
-  return secciones;
+      products: productos.map((p) => p.toPreview()).toList(),
+    ),
+  ];
 }
