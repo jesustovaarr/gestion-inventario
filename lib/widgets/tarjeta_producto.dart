@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../components/tema_alacena.dart';
 import '../presentation/modelos_vista_alacena.dart';
 import 'miniatura_producto.dart';
+import 'visualizador_codigo_barras.dart';
 
 class ProductCard extends StatelessWidget {
   const ProductCard({
@@ -184,6 +185,64 @@ class ProductCard extends StatelessWidget {
                               ),
                             ],
                           ),
+                          if (product.code != null &&
+                              product.code!.trim().isNotEmpty) ...[
+                            SizedBox(height: wide ? 8 : 5),
+                            InkWell(
+                              key: Key(
+                                'btn_codigo_producto_${product.id ?? product.name}',
+                              ),
+                              borderRadius: BorderRadius.circular(6),
+                              onTap: () => VisualizadorCodigoBarrasModal.mostrar(
+                                context,
+                                codigo: product.code!,
+                                nombreProducto: product.name,
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 2),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.qr_code_2_rounded,
+                                      size: fontSize + 3,
+                                      color: PantryColors.green,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      product.code!,
+                                      style: TextStyle(
+                                        fontSize: fontSize - 0.5,
+                                        fontFamily: 'monospace',
+                                        fontWeight: FontWeight.w600,
+                                        color: const Color(0xFF42554A),
+                                        letterSpacing: 0.5,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 5,
+                                        vertical: 1.5,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFE7F0E9),
+                                        borderRadius: BorderRadius.circular(4),
+                                      ),
+                                      child: Text(
+                                        'Ver código',
+                                        style: TextStyle(
+                                          fontSize: fontSize - 2,
+                                          fontWeight: FontWeight.w600,
+                                          color: PantryColors.green,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ),

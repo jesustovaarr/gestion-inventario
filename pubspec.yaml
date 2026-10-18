@@ -40,6 +40,11 @@ dependencies:
   table_calendar: ^3.3.0
   badges: ^4.0.1
   flutter_slidable: ^4.0.3
+  image_picker: ^1.1.2
+  http: ^1.6.0
+  mobile_scanner: ^7.4.2
+  flutter_local_notifications: ^22.3.2
+  timezone: ^0.11.2
 
 dev_dependencies:
   flutter_test:
@@ -63,10 +68,8 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
-  # To add assets to your application, add an assets section, like this:
-  # assets:
-  #   - images/a_dot_burr.jpeg
-  #   - images/a_dot_ham.jpeg
+  assets:
+    - assets/data/precios_referencia.json
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

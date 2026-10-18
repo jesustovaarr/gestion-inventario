@@ -12,6 +12,10 @@ class Lote {
   final String? productoNombre;
   final String? productoImagen;
   final String? unidad;
+  final double? stockTotalProducto;
+  final double? stockMinimo;
+  final String? categoriaNombre;
+  final String? zonaAlmacenamiento;
 
   const Lote({
     this.id,
@@ -24,6 +28,10 @@ class Lote {
     this.productoNombre,
     this.productoImagen,
     this.unidad,
+    this.stockTotalProducto,
+    this.stockMinimo,
+    this.categoriaNombre,
+    this.zonaAlmacenamiento,
     this.presentacion = PresentacionCompra.granel,
     this.contenidoEnvase = 1,
   });
@@ -65,22 +73,31 @@ class Lote {
       productoNombre: map['producto_nombre'] as String?,
       productoImagen: map['producto_imagen'] as String?,
       unidad: map['unidad'] as String?,
+      stockTotalProducto: (map['stock_total_producto'] as num?)?.toDouble(),
+      stockMinimo: (map['stock_minimo'] as num?)?.toDouble(),
+      categoriaNombre: map['categoria_nombre'] as String?,
+      zonaAlmacenamiento: map['zona_almacenamiento'] as String?,
     );
   }
 
   Lote copyWith({
     double? cantidad,
     String? fechaCaducidad,
+    int? alarmaId,
     int? alarmaActiva,
     String? horaAviso,
     PresentacionCompra? presentacion,
     double? contenidoEnvase,
+    double? stockTotalProducto,
+    double? stockMinimo,
+    String? categoriaNombre,
+    String? zonaAlmacenamiento,
   }) => Lote(
     id: id,
     productoId: productoId,
     cantidad: cantidad ?? this.cantidad,
     fechaCaducidad: fechaCaducidad ?? this.fechaCaducidad,
-    alarmaId: alarmaId,
+    alarmaId: alarmaId ?? this.alarmaId,
     alarmaActiva: alarmaActiva ?? this.alarmaActiva,
     horaAviso: horaAviso ?? this.horaAviso,
     presentacion: presentacion ?? this.presentacion,
@@ -88,7 +105,16 @@ class Lote {
     productoNombre: productoNombre,
     productoImagen: productoImagen,
     unidad: unidad,
+    stockTotalProducto: stockTotalProducto ?? this.stockTotalProducto,
+    stockMinimo: stockMinimo ?? this.stockMinimo,
+    categoriaNombre: categoriaNombre ?? this.categoriaNombre,
+    zonaAlmacenamiento: zonaAlmacenamiento ?? this.zonaAlmacenamiento,
   );
+
+  bool get porAgotarse =>
+      stockTotalProducto != null &&
+      stockMinimo != null &&
+      stockTotalProducto! <= stockMinimo!;
 
   int get diasParaCaducar {
     try {

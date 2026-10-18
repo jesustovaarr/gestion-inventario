@@ -58,6 +58,14 @@ class CalendarAlertPreview {
     this.cantidad = 1.0,
     this.unidad = 'pza',
     this.imagePath,
+    this.alarmaActiva = 1,
+    this.horaAviso = '09:00 AM',
+    this.porAgotarse = false,
+    this.stockTotal,
+    this.stockMinimo,
+    this.storageZone,
+    this.category,
+    this.fechaCaducidad,
   });
   final String name;
   final String location;
@@ -70,14 +78,24 @@ class CalendarAlertPreview {
   final double cantidad;
   final String unidad;
   final String? imagePath;
+  final int alarmaActiva;
+  final String horaAviso;
+  final bool porAgotarse;
+  final double? stockTotal;
+  final double? stockMinimo;
+  final String? storageZone;
+  final String? category;
+  final String? fechaCaducidad;
 }
 
-/// Los estados del calendario dependen de la caducidad, no de una suposición de stock bajo.
+/// Los estados del calendario distinguen caducado, por caducar, por agotarse y sin alerta.
 CalendarAlertPreview calendarAlertFromLot(Lote lote) {
   final status = lote.estaCaducado
       ? CalendarPreviewStatus.expired
       : lote.porCaducar
       ? CalendarPreviewStatus.expiring
+      : lote.porAgotarse
+      ? CalendarPreviewStatus.lowStock
       : CalendarPreviewStatus.healthy;
   final unit = lote.unidad ?? 'pza';
   return CalendarAlertPreview(
@@ -97,6 +115,14 @@ CalendarAlertPreview calendarAlertFromLot(Lote lote) {
     cantidad: lote.cantidad,
     unidad: unit,
     imagePath: lote.productoImagen,
+    alarmaActiva: lote.alarmaActiva,
+    horaAviso: lote.horaAviso,
+    porAgotarse: lote.porAgotarse,
+    stockTotal: lote.stockTotalProducto,
+    stockMinimo: lote.stockMinimo,
+    storageZone: lote.zonaAlmacenamiento,
+    category: lote.categoriaNombre,
+    fechaCaducidad: lote.fechaCaducidad,
   );
 }
 

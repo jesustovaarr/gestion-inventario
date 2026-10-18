@@ -7,6 +7,8 @@ import 'package:gestion_inventario/screens/formulario_producto.dart';
 import 'package:gestion_inventario/screens/pantalla_alertas_dia.dart';
 import 'package:gestion_inventario/screens/pantalla_calendario.dart';
 import 'package:gestion_inventario/widgets/editor_fecha_caducidad.dart';
+import 'package:gestion_inventario/widgets/dialogo_configuracion_alerta.dart';
+import 'package:gestion_inventario/widgets/miniatura_producto.dart';
 import 'package:gestion_inventario/models/lote_model.dart';
 import 'package:table_calendar/table_calendar.dart';
 
@@ -186,4 +188,167 @@ void main() {
       await inventory.close();
     },
   );
+
+  testWidgets(
+    'Calendario limita a 5 puntos y muestra indicador +N cuando hay más de 5 productos',
+    (tester) async {
+      final today = DateTime.now();
+      final events = List.generate(
+        8,
+        (i) => CalendarAlertPreview(
+          'Producto $i',
+          'Alacena',
+          '1 pza',
+          CalendarPreviewStatus.expiring,
+          ProductThumbnailKind.placeholder,
+        ),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: TableCalendar<CalendarAlertPreview>(
+              firstDay: DateTime(2000),
+              lastDay: DateTime(2100),
+              focusedDay: today,
+              eventLoader: (day) => isSameDay(day, today) ? events : const [],
+              calendarBuilders: CalendarBuilders(
+                markerBuilder: (_, day, evs) {
+                  if (evs.isEmpty) return null;
+                  final total = evs.length;
+                  const maxDots = 5;
+                  final mostrarBadge = total > maxDots;
+                  final dotsCount = mostrarBadge ? maxDots : total;
+                  final restantes = total - maxDots;
+
+                  return Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 2,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (var i = 0; i < dotsCount; i++)
+                          SizedBox(
+                            key: ValueKey(
+                              'calendar-marker-${day.year}-${day.month}-${day.day}-$i',
+                            ),
+                            width: 3.5,
+                            height: 3.5,
+                          ),
+                        if (mostrarBadge)
+                          Text(
+                            '+$restantes',
+                            key: ValueKey(
+                              'calendar-more-${day.year}-${day.month}-${day.day}',
+                            ),
+                          ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+
+      // Debe haber exactamente 5 marcadores individuales
+      for (int i = 0; i < 5; i++) {
+        expect(
+          find.byKey(
+            ValueKey(
+              'calendar-marker-${today.year}-${today.month}-${today.day}-$i',
+            ),
+          ),
+          findsOneWidget,
+        );
+      }
+      // No debe haber marcador 5 (el 6to índice)
+      expect(
+        find.byKey(
+          ValueKey(
+            'calendar-marker-${today.year}-${today.month}-${today.day}-5',
+          ),
+        ),
+        findsNothing,
+      );
+      // Debe haber un indicador de "+3"
+      expect(find.text('+3'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'DayAlertsScreen muestra productos y permite abrir diálogo de configurar recordatorio',
+    (tester) async {
+      final today = DateTime(2030, 5, 20);
+      const alertConAlarma = CalendarAlertPreview(
+        'Yogurt',
+        'Refrigerador',
+        '2 pza',
+        CalendarPreviewStatus.expiring,
+        ProductThumbnailKind.placeholder,
+        loteId: 10,
+        alarmaActiva: 1,
+        horaAviso: '08:00 AM',
+      );
+      const alertSinAlarma = CalendarAlertPreview(
+        'Cereal',
+        'Alacena',
+        '1 pza',
+        CalendarPreviewStatus.healthy,
+        ProductThumbnailKind.placeholder,
+        loteId: 11,
+        alarmaActiva: 0,
+        horaAviso: '09:00 AM',
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DayAlertsScreen(
+            day: today,
+            alerts: const [alertConAlarma, alertSinAlarma],
+          ),
+        ),
+      );
+
+      expect(find.text('Con alertas (1)'), findsOneWidget);
+      expect(find.text('Sin alerta (1)'), findsOneWidget);
+
+      // Tocar el botón de configurar alerta en el primer producto
+      final btnConfig = find.byKey(const Key('btn_config_alerta_10'));
+      expect(btnConfig, findsOneWidget);
+
+      await tester.tap(btnConfig);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(DialogoConfiguracionAlerta), findsOneWidget);
+      expect(find.text('Configurar Alerta'), findsOneWidget);
+      expect(find.text('08:00 AM'), findsOneWidget);
+
+      // Cerrar diálogo
+      await tester.tap(find.byKey(const Key('btn_cancelar_config_alerta')));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(DialogoConfiguracionAlerta), findsNothing);
+    },
+  );
+
+  test('calendarAlertFromLot asigna lowStock cuando lote.porAgotarse es true', () {
+    const loteBajoStock = Lote(
+      id: 5,
+      productoId: 1,
+      cantidad: 1.0,
+      fechaCaducidad: '2030-01-01',
+      stockTotalProducto: 1.0,
+      stockMinimo: 2.0,
+      productoNombre: 'Atún',
+    );
+
+    final preview = calendarAlertFromLot(loteBajoStock);
+    expect(preview.porAgotarse, isTrue);
+    expect(preview.status, CalendarPreviewStatus.lowStock);
+    expect(preview.status.label, 'Por agotarse');
+  });
 }

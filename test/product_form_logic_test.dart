@@ -150,6 +150,8 @@ void main() {
         250,
         scrollable: find.byType(Scrollable).first,
       );
+      await Scrollable.ensureVisible(tester.element(close), alignment: 0.5);
+      await tester.pumpAndSettle();
       await tester.tap(close);
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Eliminar'));

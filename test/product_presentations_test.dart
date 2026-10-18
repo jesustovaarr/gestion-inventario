@@ -280,6 +280,8 @@ void main() {
         300,
         scrollable: find.byType(Scrollable).first,
       );
+      await tester.drag(find.byType(Scrollable).first, const Offset(0, -150));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Guardar artículo'));
       await tester.pumpAndSettle();
       final saved = db.tables['Producto']!.singleWhere(
