@@ -17,7 +17,9 @@ void main() {
       await tester.tap(find.byTooltip('Agregar artículo'));
       await tester.pumpAndSettle();
       expect(find.text('Nuevo artículo'), findsOneWidget);
-      expect(find.text('Foto opcional'), findsOneWidget);
+      expect(find.text('Cámara'), findsNothing);
+      expect(find.text('Galería'), findsNothing);
+      expect(find.text('Escanear código'), findsNothing);
       expect(tester.takeException(), isNull);
 
       // El margen permite desplazar el formulario sin arrastrar campos internos.
@@ -36,20 +38,19 @@ void main() {
     }
   });
 
-  testWidgets('Registrar compra carga y no tiene los tres puntos en la barra superior', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: RegisterPurchaseScreen(),
-      ),
-    );
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 200));
+  testWidgets(
+    'Registrar compra carga y no tiene los tres puntos en la barra superior',
+    (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(home: RegisterPurchaseScreen()),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
 
-    // Comprobar que los tres puntos fueron removidos
-    expect(find.byIcon(Icons.more_vert_rounded), findsNothing);
-    expect(find.byIcon(Icons.qr_code_scanner_rounded), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
+      // Comprobar que los tres puntos fueron removidos
+      expect(find.byIcon(Icons.more_vert_rounded), findsNothing);
+      expect(find.text('Agregar productos'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

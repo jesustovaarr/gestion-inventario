@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../components/tema_alacena.dart';
+import '../models/lote_model.dart';
+import '../utils/presentaciones.dart';
 import '../widgets/miniatura_producto.dart';
 
 // Estados visuales para alertas en la vista de calendario
@@ -23,11 +25,11 @@ enum CalendarPreviewStatus {
     PantryColors.amber,
     PantryColors.amberLight,
   ),
-  empty(
-    'Sin existencia',
-    Icons.inventory_2_outlined,
-    Color(0xFF526C76),
-    Color(0xFFE7EEF0),
+  healthy(
+    'Sin alerta',
+    Icons.check_circle_outline_rounded,
+    PantryColors.green,
+    PantryColors.greenLight,
   );
 
   const CalendarPreviewStatus(
@@ -55,6 +57,7 @@ class CalendarAlertPreview {
     this.productoId,
     this.cantidad = 1.0,
     this.unidad = 'pza',
+    this.imagePath,
   });
   final String name;
   final String location;
@@ -66,6 +69,35 @@ class CalendarAlertPreview {
   final int? productoId;
   final double cantidad;
   final String unidad;
+  final String? imagePath;
+}
+
+/// Los estados del calendario dependen de la caducidad, no de una suposición de stock bajo.
+CalendarAlertPreview calendarAlertFromLot(Lote lote) {
+  final status = lote.estaCaducado
+      ? CalendarPreviewStatus.expired
+      : lote.porCaducar
+      ? CalendarPreviewStatus.expiring
+      : CalendarPreviewStatus.healthy;
+  final unit = lote.unidad ?? 'pza';
+  return CalendarAlertPreview(
+    lote.productoNombre ?? 'Producto',
+    etiquetaPresentacion(lote.presentacion, lote.contenidoEnvase, unit),
+    describirExistencia(
+      cantidad: lote.cantidad,
+      unidad: unit,
+      presentacion: lote.presentacion,
+      contenidoEnvase: lote.contenidoEnvase,
+    ),
+    status,
+    ProductThumbnailKind.placeholder,
+    lotCode: lote.id == null ? 'Lote' : 'Lote #${lote.id}',
+    loteId: lote.id,
+    productoId: lote.productoId,
+    cantidad: lote.cantidad,
+    unidad: unit,
+    imagePath: lote.productoImagen,
+  );
 }
 
 const calendarPreviewMonths = [

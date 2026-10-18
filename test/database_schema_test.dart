@@ -21,7 +21,40 @@ void main() {
   group('Modelos y Lógica del Plan de Inventario', () {
     test('InventarioDB define nombre y versión correctos', () {
       expect(InventarioDB.nameDB, 'alacena_inventario.db');
-      expect(InventarioDB.versionDB, 1);
+      expect(InventarioDB.versionDB, 11);
+    });
+
+    test('Carrito lee cantidades numéricas de la base de datos', () {
+      expect(
+        CarritoItem.fromMap({'producto_id': 1, 'cantidad_a_comprar': 2.5})
+            .cantidadAComprar,
+        2.5,
+      );
+      expect(
+        CarritoItem.fromMap({'producto_id': 1, 'cantidad_comprar': 2})
+            .cantidadAComprar,
+        2.0,
+      );
+    });
+
+    test('Precio admite enteros, decimales y productos sin precio', () {
+      for (final valor in <num>[25, 25.50, 0]) {
+        final producto = Producto.fromMap({
+          'nombre': 'Leche',
+          'stock_minimo': 2,
+          'categoria_id': 1,
+          'precio': valor,
+        });
+        expect(producto.precio, valor.toDouble());
+        expect(Producto.fromMap(producto.toMap()).precio, valor.toDouble());
+        expect(
+          producto.copyWith(nombre: 'Leche editada').precio,
+          valor.toDouble(),
+        );
+      }
+      final sinPrecio = Producto.fromMap({'nombre': 'Anterior'});
+      expect(sinPrecio.precio, isNull);
+      expect(sinPrecio.toMap()['precio'], isNull);
     });
 
     test('Categoria serializa y deserializa correctamente', () {
@@ -158,10 +191,7 @@ void main() {
       );
       expect(hc.totalGasto, 85.5);
 
-      const item = CarritoItem(
-        productoId: 1,
-        cantidadAComprar: 2.0,
-      );
+      const item = CarritoItem(productoId: 1, cantidadAComprar: 2.0);
       final mapItem = item.toMap();
       expect(mapItem['cantidad_a_comprar'], 2.0);
       expect(mapItem['producto_id'], 1);

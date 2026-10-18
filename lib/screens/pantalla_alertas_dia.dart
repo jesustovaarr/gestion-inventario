@@ -2,18 +2,13 @@ import 'package:flutter/material.dart';
 
 import '../components/tema_alacena.dart';
 import '../database/daos/lote_dao.dart';
-import '../database/daos/producto_dao.dart';
-import '../models/lote_model.dart';
-import '../presentation/modelos_vista_alacena.dart';
 import '../presentation/modelos_vista_calendario.dart';
-import '../presentation/controlador_carrito.dart';
 import '../widgets/barra_navegacion_inferior.dart';
 import '../widgets/encabezado_seccion.dart';
 import '../widgets/miniatura_producto.dart';
-import 'pantalla_detalle_producto.dart';
+import '../widgets/editor_fecha_caducidad.dart';
 
-// Vista diaria que muestra los lotes que vencen en una fecha específica,
-// permitiendo consumir, desechar, agregar al carrito o gestionar el producto.
+// Consulta de los productos que caducan en la fecha seleccionada.
 class DayAlertsScreen extends StatefulWidget {
   const DayAlertsScreen({super.key, required this.day, required this.alerts});
   final DateTime day;
@@ -25,10 +20,10 @@ class DayAlertsScreen extends StatefulWidget {
 
 class _DayAlertsScreenState extends State<DayAlertsScreen> {
   final LoteDao _loteDao = LoteDao();
-  final ProductoDao _productoDao = ProductoDao();
+  final Set<int> _fechasEnEdicion = {};
 
   late List<CalendarAlertPreview> _alertas;
-  bool _clearView = false;
+  bool? _clearView;
   CalendarPreviewStatus? _status;
 
   @override
@@ -39,34 +34,6 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
 
   void _close() => Navigator.of(context).pop();
 
-  CalendarAlertPreview _loteToAlert(Lote lote) {
-    CalendarPreviewStatus st;
-    if (lote.estaCaducado) {
-      st = CalendarPreviewStatus.expired;
-    } else if (lote.porCaducar) {
-      st = CalendarPreviewStatus.expiring;
-    } else {
-      st = CalendarPreviewStatus.lowStock;
-    }
-
-    final cantStr = lote.cantidad.truncateToDouble() == lote.cantidad
-        ? '${lote.cantidad.toInt()}'
-        : lote.cantidad.toStringAsFixed(1);
-
-    return CalendarAlertPreview(
-      lote.productoNombre ?? 'Producto',
-      'Alacena · Inventario',
-      '$cantStr ${lote.unidad ?? "pza"}',
-      st,
-      ProductThumbnailKind.placeholder,
-      lotCode: lote.id != null ? 'Lote #${lote.id}' : 'Lote',
-      loteId: lote.id,
-      productoId: lote.productoId,
-      cantidad: lote.cantidad,
-      unidad: lote.unidad ?? 'pza',
-    );
-  }
-
   Future<void> _recargarAlertas() async {
     try {
       final iso =
@@ -74,74 +41,47 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
       final lotes = await _loteDao.obtenerLotesPorFecha(iso);
       if (mounted) {
         setState(() {
-          _alertas = lotes.map(_loteToAlert).toList();
+          _alertas = lotes.map(calendarAlertFromLot).toList();
         });
       }
     } catch (_) {}
   }
 
-  Future<void> _agregarAlCarrito(CalendarAlertPreview alert) async {
-    if (alert.productoId == null) return;
+  Future<void> _editarFecha(CalendarAlertPreview alert) async {
+    final id = alert.loteId;
+    if (id == null || !_fechasEnEdicion.add(id)) return;
     try {
-      final productPreview = PantryProductPreview(
-        id: alert.productoId,
-        name: alert.name,
-        category: 'Inventario',
-        status: PantryPreviewStatus.healthy,
-        note: 'Stock: ${alert.quantity}',
-        quantity: alert.quantity,
-        thumbnail: alert.thumbnail,
-        unit: alert.unidad,
+      final fecha = await showDialog<DateTime>(
+        context: context,
+        builder: (_) => ExpiryDateEditorDialog(initialDate: widget.day),
       );
-
-      try {
-        ShoppingListsPreviewScope.of(context).addProduct(productPreview);
-      } catch (_) {}
-
+      if (fecha == null || !mounted) return;
+      final iso = fecha.toIso8601String().substring(0, 10);
+      final cambios = await _loteDao.actualizarFechaCaducidad(id, iso);
+      if (cambios != 1) throw StateError('El lote ya no tiene existencias.');
+      await _recargarAlertas();
       if (mounted) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${alert.name} agregado a la lista de compras'),
-            duration: const Duration(seconds: 2),
-            behavior: SnackBarBehavior.floating,
-          ),
+          const SnackBar(content: Text('Fecha de caducidad actualizada')),
         );
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('${alert.name} agregado a la lista de compras'),
-            duration: const Duration(seconds: 2),
-            behavior: SnackBarBehavior.floating,
+          const SnackBar(
+            content: Text('No se pudo actualizar la fecha del lote.'),
           ),
         );
       }
+    } finally {
+      _fechasEnEdicion.remove(id);
     }
   }
 
-  Future<void> _gestionarLote(CalendarAlertPreview alert) async {
-    if (alert.productoId == null) return;
-    try {
-      final producto = await _productoDao.obtenerPorId(alert.productoId!);
-      if (producto == null || !mounted) return;
-
-      await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => ProductDetailScreen(product: producto.toPreview()),
-        ),
-      );
-
-      await _recargarAlertas();
-    } catch (_) {}
-  }
-
-  void _abrirSelectorGestionarLote(List<CalendarAlertPreview> lista) {
+  void _seleccionarLoteParaEditarFecha(List<CalendarAlertPreview> lista) {
     if (lista.isEmpty) return;
     if (lista.length == 1) {
-      _gestionarLote(lista.first);
+      _editarFecha(lista.first);
       return;
     }
     showModalBottomSheet(
@@ -157,7 +97,7 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
             const Padding(
               padding: EdgeInsets.fromLTRB(20, 16, 20, 8),
               child: Text(
-                'Selecciona un artículo a gestionar',
+                'Selecciona el lote para cambiar su fecha',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
             ),
@@ -182,7 +122,7 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
                     trailing: const Icon(Icons.chevron_right, size: 20),
                     onTap: () {
                       Navigator.of(ctx).pop();
-                      _gestionarLote(a);
+                      _editarFecha(a);
                     },
                   );
                 },
@@ -195,199 +135,23 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
     );
   }
 
-  Future<void> _consumirLote(CalendarAlertPreview alert) async {
-    if (alert.status == CalendarPreviewStatus.expired) {
-      final confirmar = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Desechar lote'),
-          content: Text(
-            '¿Deseas desechar este lote caducado de "${alert.name}"?\n'
-            'Cantidad: ${alert.quantity}\n\n'
-            'Esta acción dará de baja el lote y lo descontará del inventario.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('Cancelar'),
-            ),
-            FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: PantryColors.red,
-              ),
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('Desechar'),
-            ),
-          ],
-        ),
-      );
-
-      if (confirmar == true) {
-        try {
-          if (alert.loteId != null) {
-            await _loteDao.descartarLote(alert.loteId!);
-          } else if (alert.productoId != null) {
-            await _loteDao.descontarStockFEFO(alert.productoId!, alert.cantidad);
-          }
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Lote de ${alert.name} desechado'),
-                backgroundColor: PantryColors.orange,
-                duration: const Duration(seconds: 2),
-                behavior: SnackBarBehavior.floating,
-              ),
-            );
-            await _recargarAlertas();
-          }
-        } catch (_) {}
-      }
-      return;
-    }
-
-    // Caso Consumir / Anotar / Reordenar
-    double cantConsumir = alert.cantidad > 0 ? alert.cantidad : 1.0;
-    final confirmar = await showDialog<bool>(
-      context: context,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setDialogState) => AlertDialog(
-            title: const Text('Consumir producto'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '¿Deseas registrar el consumo de "${alert.name}"?',
-                  style: const TextStyle(fontSize: 14),
-                ),
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: PantryColors.greenLight,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        alert.lotCode,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: PantryColors.muted,
-                        ),
-                      ),
-                      Text(
-                        'Disponible: ${alert.quantity}',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                if (alert.cantidad > 1) ...[
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Cantidad a consumir:',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: PantryColors.muted,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      IconButton.filledTonal(
-                        onPressed: cantConsumir > 1
-                            ? () => setDialogState(() => cantConsumir--)
-                            : null,
-                        icon: const Icon(Icons.remove, size: 18),
-                      ),
-                      const SizedBox(width: 16),
-                      Text(
-                        '${cantConsumir.truncateToDouble() == cantConsumir ? cantConsumir.toInt() : cantConsumir.toStringAsFixed(1)} ${alert.unidad}',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      IconButton.filledTonal(
-                        onPressed: cantConsumir < alert.cantidad
-                            ? () => setDialogState(() => cantConsumir++)
-                            : null,
-                        icon: const Icon(Icons.add, size: 18),
-                      ),
-                    ],
-                  ),
-                ],
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(false),
-                child: const Text('Cancelar'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.of(ctx).pop(true),
-                child: const Text('Consumir'),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-
-    if (confirmar == true) {
-      try {
-        if (alert.loteId != null) {
-          if (cantConsumir >= alert.cantidad) {
-            await _loteDao.descartarLote(alert.loteId!);
-          } else {
-            await _loteDao.actualizarCantidad(
-              alert.loteId!,
-              alert.cantidad - cantConsumir,
-            );
-          }
-        } else if (alert.productoId != null) {
-          await _loteDao.descontarStockFEFO(alert.productoId!, cantConsumir);
-        }
-
-        if (mounted) {
-          final cantStr = cantConsumir.truncateToDouble() == cantConsumir
-              ? '${cantConsumir.toInt()}'
-              : cantConsumir.toStringAsFixed(1);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Se consumieron $cantStr ${alert.unidad} de ${alert.name}',
-              ),
-              backgroundColor: PantryColors.green,
-              duration: const Duration(seconds: 2),
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-          await _recargarAlertas();
-        }
-      } catch (_) {}
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final alerts = _alertas;
-    final visible = _clearView
-        ? <CalendarAlertPreview>[]
-        : alerts
-              .where((alert) => _status == null || alert.status == _status)
-              .toList();
+    final withAlerts = alerts
+        .where((a) => a.status != CalendarPreviewStatus.healthy)
+        .toList();
+    final withoutAlerts = alerts
+        .where((a) => a.status == CalendarPreviewStatus.healthy)
+        .toList();
+    final visible =
+        (_clearView == true
+                ? withoutAlerts
+                : _clearView == false
+                ? withAlerts
+                : alerts)
+            .where((a) => _status == null || a.status == _status)
+            .toList();
     const weekdays = [
       'Lunes',
       'Martes',
@@ -444,7 +208,7 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  '${alerts.length} alertas activas',
+                                  '${alerts.length} ${alerts.length == 1 ? "producto" : "productos"} para esta fecha',
                                   style: const TextStyle(
                                     fontSize: 10,
                                     color: PantryColors.muted,
@@ -454,10 +218,10 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
                             ),
                           ),
                           IconButton(
-                            onPressed: () => _abrirSelectorGestionarLote(
+                            onPressed: () => _seleccionarLoteParaEditarFecha(
                               visible.isNotEmpty ? visible : _alertas,
                             ),
-                            tooltip: 'Gestionar alertas del día',
+                            tooltip: 'Editar fecha de caducidad',
                             style: IconButton.styleFrom(
                               backgroundColor: PantryColors.greenLight,
                               foregroundColor: PantryColors.green,
@@ -484,18 +248,26 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
                           children: [
                             Expanded(
                               child: _DayTab(
-                                label: 'Con alertas (${alerts.length})',
+                                label: 'Con alertas (${withAlerts.length})',
                                 icon: Icons.notifications_active_outlined,
-                                selected: !_clearView,
-                                onTap: () => setState(() => _clearView = false),
+                                selected: _clearView == false,
+                                onTap: () => setState(() {
+                                  _clearView = _clearView == false
+                                      ? null
+                                      : false;
+                                  _status = null;
+                                }),
                               ),
                             ),
                             Expanded(
                               child: _DayTab(
-                                label: 'Día despejado (0)',
+                                label: 'Sin alerta (${withoutAlerts.length})',
                                 icon: Icons.event_available_outlined,
-                                selected: _clearView,
-                                onTap: () => setState(() => _clearView = true),
+                                selected: _clearView == true,
+                                onTap: () => setState(() {
+                                  _clearView = _clearView == true ? null : true;
+                                  _status = null;
+                                }),
                               ),
                             ),
                           ],
@@ -503,61 +275,52 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
                       ),
                     ),
                   ),
-                  SliverPadding(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    sliver: SliverToBoxAdapter(
-                      child: SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        padding: const EdgeInsets.symmetric(horizontal: 20),
-                        child: Row(
-                          children: [
-                            ChoiceChip(
-                              label: Text(
-                                'Todos (${_clearView ? 0 : alerts.length})',
-                              ),
-                              selected: _status == null,
-                              showCheckmark: false,
-                              onSelected: (_) => setState(() => _status = null),
-                              selectedColor: PantryColors.green,
-                              backgroundColor: Colors.white,
-                              labelStyle: TextStyle(
-                                fontSize: 10,
-                                color: _status == null
-                                    ? Colors.white
-                                    : PantryColors.ink,
-                              ),
-                              side: BorderSide.none,
-                            ),
-                            for (final status in CalendarPreviewStatus.values)
-                              Padding(
-                                padding: const EdgeInsets.only(left: 6),
-                                child: ChoiceChip(
-                                  label: Text(
-                                    '${status.label} (${_clearView ? 0 : alerts.where((alert) => alert.status == status).length})',
+                  if (_clearView != true)
+                    SliverPadding(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      sliver: SliverToBoxAdapter(
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          child: Row(
+                            children: [
+                              for (final status
+                                  in CalendarPreviewStatus.values.where(
+                                    (s) => s != CalendarPreviewStatus.healthy,
+                                  ))
+                                Padding(
+                                  padding: const EdgeInsets.only(left: 6),
+                                  child: ChoiceChip(
+                                    label: Text(
+                                      '${status.label} (${withAlerts.where((alert) => alert.status == status).length})',
+                                    ),
+                                    avatar: Icon(
+                                      Icons.circle,
+                                      size: 6,
+                                      color: status.color,
+                                    ),
+                                    selected: _status == status,
+                                    showCheckmark: false,
+                                    onSelected: (_) => setState(() {
+                                      _status = _status == status
+                                          ? null
+                                          : status;
+                                      _clearView = null;
+                                    }),
+                                    labelStyle: TextStyle(
+                                      fontSize: 10,
+                                      color: status.color,
+                                    ),
+                                    backgroundColor: Colors.white,
+                                    selectedColor: status.background,
+                                    side: BorderSide.none,
                                   ),
-                                  avatar: Icon(
-                                    Icons.circle,
-                                    size: 6,
-                                    color: status.color,
-                                  ),
-                                  selected: _status == status,
-                                  showCheckmark: false,
-                                  onSelected: (_) =>
-                                      setState(() => _status = status),
-                                  labelStyle: TextStyle(
-                                    fontSize: 10,
-                                    color: status.color,
-                                  ),
-                                  backgroundColor: Colors.white,
-                                  selectedColor: status.background,
-                                  side: BorderSide.none,
                                 ),
-                              ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
-                  ),
                   if (visible.isEmpty)
                     SliverPadding(
                       padding: const EdgeInsets.fromLTRB(20, 28, 20, 36),
@@ -571,7 +334,7 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
                             ),
                             const SizedBox(height: 12),
                             Text(
-                              _clearView
+                              _clearView == true
                                   ? 'No hay productos sin alertas para este día'
                                   : alerts.isEmpty
                                   ? 'Sin alertas para este día'
@@ -594,68 +357,9 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
                         itemBuilder: (_, index) => _DayProductCard(
                           alert: visible[index],
                           day: widget.day,
-                          onConsume: _consumirLote,
-                          onAddToCart: _agregarAlCarrito,
-                          onManageLot: _gestionarLote,
                         ),
                       ),
                     ),
-                  if (alerts.isNotEmpty && !_clearView) ...[
-                    SliverPadding(
-                      padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-                      sliver: SliverToBoxAdapter(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFE8F2EA),
-                            borderRadius: BorderRadius.circular(11),
-                          ),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Text(
-                                      'Lotes del día',
-                                      style: TextStyle(
-                                        fontSize: 9,
-                                        color: PantryColors.muted,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 3),
-                                    Text(
-                                      '${alerts.where((alert) => alert.status == CalendarPreviewStatus.expiring).length} por vencer / ${alerts.where((alert) => alert.status == CalendarPreviewStatus.expired).length} crítico',
-                                      style: const TextStyle(
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              TextButton.icon(
-                                onPressed: () => _abrirSelectorGestionarLote(
-                                  visible.isNotEmpty ? visible : alerts,
-                                ),
-                                icon: const Icon(
-                                  Icons.inventory_2_outlined,
-                                  size: 14,
-                                ),
-                                label: const Text(
-                                  'Gestionar lote',
-                                  style: TextStyle(fontSize: 10),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
                 ],
               ),
             ),
@@ -668,193 +372,127 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
 }
 
 class _DayProductCard extends StatelessWidget {
-  const _DayProductCard({
-    required this.alert,
-    required this.day,
-    required this.onConsume,
-    required this.onAddToCart,
-    required this.onManageLot,
-  });
-
+  const _DayProductCard({required this.alert, required this.day});
   final CalendarAlertPreview alert;
   final DateTime day;
-  final ValueChanged<CalendarAlertPreview> onConsume;
-  final ValueChanged<CalendarAlertPreview> onAddToCart;
-  final ValueChanged<CalendarAlertPreview> onManageLot;
 
   @override
-  Widget build(BuildContext context) {
-    final action = switch (alert.status) {
-      CalendarPreviewStatus.expired => 'Desechar',
-      CalendarPreviewStatus.expiring => 'Consumir',
-      CalendarPreviewStatus.lowStock => 'Anotar',
-      CalendarPreviewStatus.empty => 'Reordenar',
-    };
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: PantryColors.border),
-      ),
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(16),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(16),
-          onTap: () => onManageLot(alert),
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    ProductThumbnail(kind: alert.thumbnail, size: 54),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            alert.name,
-                            style: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            alert.location,
-                            style: const TextStyle(
-                              fontSize: 10,
-                              color: PantryColors.muted,
-                            ),
-                          ),
-                          const SizedBox(height: 5),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: alert.status.background,
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              alert.status.label,
-                              style: TextStyle(
-                                fontSize: 9,
-                                color: alert.status.color,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: () => onManageLot(alert),
-                      tooltip: 'Gestionar lote',
-                      icon: const Icon(
-                        Icons.chevron_right,
-                        color: PantryColors.muted,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Wrap(
-                  spacing: 7,
-                  runSpacing: 4,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.event_outlined,
-                      size: 12,
-                      color: alert.status.color,
-                    ),
-                    Text(
-                      calendarPreviewDateLabel(day),
-                      style: TextStyle(fontSize: 9, color: alert.status.color),
-                    ),
-                    Text(
-                      alert.lotCode,
-                      style: const TextStyle(
-                        fontSize: 9,
-                        color: PantryColors.muted,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 9),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 5,
-                        ),
-                        decoration: BoxDecoration(
-                          color: PantryColors.greenLight,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(
-                              Icons.inventory_2_outlined,
-                              size: 12,
-                              color: PantryColors.muted,
-                            ),
-                            const SizedBox(width: 4),
-                            Flexible(
-                              child: Text(
-                                alert.quantity,
-                                style: const TextStyle(
-                                  fontSize: 9,
-                                  color: PantryColors.ink,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    TextButton(
-                      onPressed: () => onConsume(alert),
-                      style: TextButton.styleFrom(
-                        backgroundColor: const Color(0xFFEAF1EB),
-                        padding: const EdgeInsets.symmetric(horizontal: 9),
-                        minimumSize: const Size(0, 30),
-                        foregroundColor: PantryColors.ink,
-                      ),
-                      child: Text(action, style: const TextStyle(fontSize: 10)),
-                    ),
-                    const SizedBox(width: 5),
-                    IconButton.filled(
-                      onPressed: () => onAddToCart(alert),
-                      tooltip: 'Agregar ${alert.name} al carrito',
-                      style: IconButton.styleFrom(
-                        backgroundColor: PantryColors.green,
-                        minimumSize: const Size(32, 32),
-                        visualDensity: VisualDensity.compact,
-                      ),
-                      icon: const Icon(
-                        Icons.add_shopping_cart_outlined,
-                        size: 17,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+  Widget build(BuildContext context) => Container(
+    margin: const EdgeInsets.only(bottom: 12),
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: PantryColors.border),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ProductThumbnail(
+              kind: alert.thumbnail,
+              imagePath: alert.imagePath,
+              size: 54,
             ),
-          ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    alert.name,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    alert.location,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: PantryColors.muted,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: alert.status.background,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          alert.status.icon,
+                          size: 13,
+                          color: alert.status.color,
+                        ),
+                        const SizedBox(width: 5),
+                        Flexible(
+                          child: Text(
+                            alert.status.label,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: alert.status.color,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
-      ),
-    );
-  }
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            const Icon(
+              Icons.inventory_2_outlined,
+              size: 16,
+              color: PantryColors.green,
+            ),
+            const SizedBox(width: 7),
+            Expanded(
+              child: Text(
+                alert.quantity,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            const Icon(
+              Icons.event_outlined,
+              size: 16,
+              color: PantryColors.muted,
+            ),
+            const SizedBox(width: 7),
+            Expanded(
+              child: Text(
+                'Caducidad: ${calendarPreviewDateLabel(day)}',
+                style: const TextStyle(fontSize: 12, color: PantryColors.muted),
+              ),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
 }
 
 class _DayTab extends StatelessWidget {
