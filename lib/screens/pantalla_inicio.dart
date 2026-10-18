@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../utils/cantidades.dart';
+
 import '../widgets/encabezado_seccion.dart';
 
 import '../widgets/barra_navegacion_inferior.dart';
@@ -22,8 +24,8 @@ class HomeScreen extends StatefulWidget {
     this.onDestinationSelected,
     this.onProductTap,
     this.onAddToCart,
+    this.onInventoryAction,
     this.cartCount = 0,
-    this.onEditProduct,
     this.onDeleteProduct,
     this.sections = const [],
   });
@@ -35,8 +37,8 @@ class HomeScreen extends StatefulWidget {
   final ValueChanged<int>? onDestinationSelected;
   final ValueChanged<PantryProductPreview>? onProductTap;
   final ValueChanged<PantryProductPreview>? onAddToCart;
-  final int cartCount;
-  final ValueChanged<PantryProductPreview>? onEditProduct;
+  final ValueChanged<PantryProductPreview>? onInventoryAction;
+  final num cartCount;
   final ValueChanged<PantryProductPreview>? onDeleteProduct;
   final List<PantrySectionPreview>? sections;
 
@@ -66,7 +68,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
     for (final section in allSections) {
       for (final p in section.products) {
-        final matchSearch = _filtroTexto.isEmpty ||
+        final matchSearch =
+            _filtroTexto.isEmpty ||
             p.name.toLowerCase().contains(_filtroTexto.toLowerCase()) ||
             p.category.toLowerCase().contains(_filtroTexto.toLowerCase());
         if (!matchSearch) continue;
@@ -88,10 +91,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final List<PantrySectionPreview> seccionesMostradas = allSections
         .map((s) {
-          if (_filtroEstado != null && s.status != _filtroEstado) {
-            return null;
-          }
-
           final productosFiltrados = s.products.where((p) {
             if (_filtroEstado != null && p.status != _filtroEstado) {
               return false;
@@ -242,8 +241,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                 _filtroTexto.isNotEmpty
                                     ? 'No se encontraron artículos para "$_filtroTexto"'
                                     : _filtroEstado != null
-                                        ? 'Sin artículos en "${_filtroEstado!.label}"'
-                                        : 'No hay artículos registrados',
+                                    ? 'Sin artículos en "${_filtroEstado!.label}"'
+                                    : 'No hay artículos registrados',
                                 textAlign: TextAlign.center,
                                 style: const TextStyle(
                                   fontSize: 13,
@@ -274,14 +273,17 @@ class _HomeScreenState extends State<HomeScreen> {
                             return Padding(
                               padding: const EdgeInsets.only(bottom: 8),
                               child: CatalogSwipeActions(
-                                key: ValueKey('product-swipe-${product.name}'),
+                                key: ValueKey('product-swipe-${product.key}'),
                                 name: product.name,
-                                onEdit: () =>
-                                    widget.onEditProduct?.call(product),
                                 onDelete: () =>
                                     widget.onDeleteProduct?.call(product),
                                 child: ProductCard(
                                   product: product,
+                                  onInventoryAction:
+                                      widget.onInventoryAction == null
+                                      ? null
+                                      : () =>
+                                            widget.onInventoryAction!(product),
                                   onTap: widget.onProductTap == null
                                       ? null
                                       : () => widget.onProductTap!(product),
@@ -318,10 +320,7 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 class _HomeAppBar extends StatelessWidget {
-  const _HomeAppBar({
-    this.isSearching = false,
-    this.onToggleSearch,
-  });
+  const _HomeAppBar({this.isSearching = false, this.onToggleSearch});
 
   final bool isSearching;
   final VoidCallback? onToggleSearch;
@@ -359,7 +358,7 @@ class _PantryHeading extends StatelessWidget {
   });
 
   final VoidCallback? onCart;
-  final int cartCount;
+  final num cartCount;
   final int itemCount;
 
   @override
@@ -401,7 +400,7 @@ class _PantryHeading extends StatelessWidget {
             ignorePointer: true,
             showBadge: cartCount > 0,
             badgeContent: Text(
-              '$cartCount',
+              formatearCantidad(cartCount),
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 9,
@@ -477,8 +476,9 @@ class _StatusFilters extends StatelessWidget {
                 child: InkWell(
                   borderRadius: BorderRadius.circular(30),
                   onTap: () {
-                    final nuevo =
-                        selectedStatus == filter.$6 ? null : filter.$6;
+                    final nuevo = selectedStatus == filter.$6
+                        ? null
+                        : filter.$6;
                     onStatusSelected?.call(nuevo);
                   },
                   child: AnimatedContainer(

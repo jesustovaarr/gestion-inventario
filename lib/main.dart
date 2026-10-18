@@ -2,13 +2,13 @@ import 'package:flutter/material.dart';
 
 import 'components/tema_alacena.dart';
 import 'screens/pantalla_inicio.dart';
-import 'screens/pantalla_detalle_producto.dart';
 import 'screens/pantalla_carrito.dart';
 import 'screens/pantalla_tiendas.dart';
 import 'screens/pantalla_nuevo_articulo.dart';
 import 'screens/pantalla_calendario.dart';
 import 'screens/formulario_producto.dart';
 import 'presentation/controlador_carrito.dart';
+import 'presentation/acciones_inventario.dart';
 
 import 'database/daos/producto_dao.dart';
 import 'presentation/modelos_vista_alacena.dart';
@@ -29,6 +29,7 @@ class AlacenaPreviewApp extends StatefulWidget {
 class _AlacenaPreviewAppState extends State<AlacenaPreviewApp> {
   final _lists = ShoppingListsPreviewController();
   final _productoDao = ProductoDao();
+  final Set<int> _accionesEnCurso = {};
 
   List<PantrySectionPreview> _seccionesBD = const [];
 
@@ -39,8 +40,13 @@ class _AlacenaPreviewAppState extends State<AlacenaPreviewApp> {
     _cargarDatosBD();
   }
 
-  void _onCartChanged() {
-    if (mounted) setState(() {});
+  void _onCartChanged() async {
+    try {
+      final secciones = await obtenerSeccionesDesdeBD();
+      if (mounted) setState(() => _seccionesBD = secciones);
+    } catch (_) {
+      if (mounted) setState(() {});
+    }
   }
 
   Future<void> _cargarDatosBD() async {
@@ -84,26 +90,31 @@ class _AlacenaPreviewAppState extends State<AlacenaPreviewApp> {
             return HomeScreen(
               cartCount: badgeCount,
               sections: _seccionesBD,
+              onInventoryAction: (product) async {
+                if (product.id == null ||
+                    _accionesEnCurso.contains(product.id)) {
+                  return;
+                }
+                _accionesEnCurso.add(product.id!);
+                try {
+                  await actuarSobrePrimerLote(context, product.id!);
+                  await _cargarDatosBD();
+                } finally {
+                  _accionesEnCurso.remove(product.id);
+                }
+              },
               onAddToCart: (product) {
                 lists.addProduct(product);
                 ScaffoldMessenger.of(context).hideCurrentSnackBar();
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text('"${product.name}" agregado a la lista de compras'),
+                    content: Text(
+                      '"${product.name}" agregado a la lista de compras',
+                    ),
                     duration: const Duration(seconds: 2),
                     behavior: SnackBarBehavior.floating,
                   ),
                 );
-              },
-              onEditProduct: (product) async {
-                final res = await Navigator.of(context).push<bool>(
-                  MaterialPageRoute<bool>(
-                    builder: (_) => ProductFormScreen(product: product),
-                  ),
-                );
-                if (res == true || mounted) {
-                  _cargarDatosBD();
-                }
               },
               onDeleteProduct: (product) async {
                 final confirm = await showDialog<bool>(
@@ -111,7 +122,7 @@ class _AlacenaPreviewAppState extends State<AlacenaPreviewApp> {
                   builder: (ctx) => AlertDialog(
                     title: const Text('Eliminar del inventario'),
                     content: Text(
-                      '¿Deseas eliminar "${product.name}" y todos sus lotes registrados?',
+                      '¿Deseas eliminar "${product.name}" (${product.presentationLabel}) y sus lotes registrados?',
                     ),
                     actions: [
                       TextButton(
@@ -150,12 +161,12 @@ class _AlacenaPreviewAppState extends State<AlacenaPreviewApp> {
                 _cargarDatosBD();
               },
               onProductTap: (product) async {
-                await Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => ProductDetailScreen(product: product),
+                await Navigator.of(context).push<bool>(
+                  MaterialPageRoute<bool>(
+                    builder: (_) => ProductFormScreen(product: product),
                   ),
                 );
-                _cargarDatosBD();
+                if (mounted) await _cargarDatosBD();
               },
             );
           },

@@ -1,18 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 
+import '../components/tema_alacena.dart';
+
 /// Acciones comunes para las tarjetas de productos y tiendas.
 class CatalogSwipeActions extends StatelessWidget {
   const CatalogSwipeActions({
     super.key,
     required this.name,
     required this.child,
-    required this.onEdit,
     required this.onDelete,
   });
   final String name;
   final Widget child;
-  final VoidCallback onEdit;
   final VoidCallback onDelete;
 
   @override
@@ -21,13 +21,12 @@ class CatalogSwipeActions extends StatelessWidget {
     child: Slidable(
       endActionPane: ActionPane(
         motion: const ScrollMotion(),
-        extentRatio: .48,
+        extentRatio: .28,
         children: [
-          _action('Editar', Icons.edit_outlined, Colors.white, onEdit),
           _action(
             'Borrar',
             Icons.delete_outline_rounded,
-            const Color(0xFFFFB8AE),
+            Colors.white,
             onDelete,
           ),
         ],
@@ -43,7 +42,7 @@ class CatalogSwipeActions extends StatelessWidget {
     VoidCallback callback,
   ) => CustomSlidableAction(
     onPressed: (_) => callback(),
-    backgroundColor: const Color(0xFF18344D),
+    backgroundColor: PantryColors.red,
     foregroundColor: foreground,
     padding: EdgeInsets.zero,
     child: Tooltip(

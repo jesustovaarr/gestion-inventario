@@ -25,7 +25,7 @@ class _StoresScreenState extends State<StoresScreen> {
   bool _cargando = true;
   bool _mostrarBuscador = false;
   String _filtroTexto = '';
-  String _filtroActivo = 'Todas';
+  String? _filtroActivo;
 
   @override
   void initState() {
@@ -52,9 +52,12 @@ class _StoresScreenState extends State<StoresScreen> {
 
   List<Tienda> get _tiendasFiltradas {
     return _todasLasTiendas.where((tienda) {
-      final matchesSearch = _filtroTexto.isEmpty ||
+      final matchesSearch =
+          _filtroTexto.isEmpty ||
           tienda.nombre.toLowerCase().contains(_filtroTexto.toLowerCase()) ||
-          (tienda.ubicacion ?? '').toLowerCase().contains(_filtroTexto.toLowerCase());
+          (tienda.ubicacion ?? '').toLowerCase().contains(
+            _filtroTexto.toLowerCase(),
+          );
 
       if (!matchesSearch) return false;
 
@@ -63,7 +66,6 @@ class _StoresScreenState extends State<StoresScreen> {
           return tienda.totalCompras > 0;
         case 'Frecuentes':
           return tienda.totalCompras >= 3;
-        case 'Todas':
         default:
           return true;
       }
@@ -72,9 +74,7 @@ class _StoresScreenState extends State<StoresScreen> {
 
   Future<void> _abrirNuevaTienda() async {
     final creado = await Navigator.of(context).push<bool>(
-      MaterialPageRoute<bool>(
-        builder: (_) => const StoreFormScreen(),
-      ),
+      MaterialPageRoute<bool>(builder: (_) => const StoreFormScreen()),
     );
     if (creado == true) {
       _cargarTiendas();
@@ -157,9 +157,7 @@ class _StoresScreenState extends State<StoresScreen> {
                     pinned: true,
                     automaticallyImplyLeading: false,
                     titleSpacing: 20,
-                    title: const AppSectionHeading(
-                      section: AppSection.stores,
-                    ),
+                    title: const AppSectionHeading(section: AppSection.stores),
                     actions: [
                       Padding(
                         padding: const EdgeInsets.only(right: 12),
@@ -250,29 +248,13 @@ class _StoresScreenState extends State<StoresScreen> {
                       padding: const EdgeInsets.symmetric(horizontal: 20),
                       child: Row(
                         children: [
-                          FilledButton(
-                            onPressed: () => setState(() => _filtroActivo = 'Todas'),
-                            style: FilledButton.styleFrom(
-                              backgroundColor: _filtroActivo == 'Todas'
-                                  ? PantryColors.green
-                                  : Colors.white,
-                              foregroundColor: _filtroActivo == 'Todas'
-                                  ? Colors.white
-                                  : PantryColors.ink,
-                              side: _filtroActivo == 'Todas'
-                                  ? BorderSide.none
-                                  : const BorderSide(color: PantryColors.border),
-                              padding: const EdgeInsets.symmetric(horizontal: 13),
-                              minimumSize: const Size(0, 36),
-                            ),
-                            child: Text(
-                              'Todas   ${_todasLasTiendas.length}',
-                              style: const TextStyle(fontSize: 11),
-                            ),
-                          ),
-                          const SizedBox(width: 7),
                           OutlinedButton.icon(
-                            onPressed: () => setState(() => _filtroActivo = 'Con compras'),
+                            onPressed: () => setState(
+                              () =>
+                                  _filtroActivo = _filtroActivo == 'Con compras'
+                                  ? null
+                                  : 'Con compras',
+                            ),
                             icon: Icon(
                               Icons.receipt_long_outlined,
                               size: 14,
@@ -282,7 +264,10 @@ class _StoresScreenState extends State<StoresScreen> {
                             ),
                             label: const Text(
                               'Con compras registradas',
-                              style: TextStyle(fontSize: 11, color: PantryColors.ink),
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: PantryColors.ink,
+                              ),
                             ),
                             style: OutlinedButton.styleFrom(
                               backgroundColor: _filtroActivo == 'Con compras'
@@ -293,13 +278,20 @@ class _StoresScreenState extends State<StoresScreen> {
                                     ? PantryColors.green
                                     : PantryColors.border,
                               ),
-                              padding: const EdgeInsets.symmetric(horizontal: 11),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 11,
+                              ),
                               minimumSize: const Size(0, 36),
                             ),
                           ),
                           const SizedBox(width: 7),
                           OutlinedButton.icon(
-                            onPressed: () => setState(() => _filtroActivo = 'Frecuentes'),
+                            onPressed: () => setState(
+                              () =>
+                                  _filtroActivo = _filtroActivo == 'Frecuentes'
+                                  ? null
+                                  : 'Frecuentes',
+                            ),
                             icon: Icon(
                               Icons.star_border_rounded,
                               size: 14,
@@ -309,7 +301,10 @@ class _StoresScreenState extends State<StoresScreen> {
                             ),
                             label: const Text(
                               'Frecuentes',
-                              style: TextStyle(fontSize: 11, color: PantryColors.ink),
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: PantryColors.ink,
+                              ),
                             ),
                             style: OutlinedButton.styleFrom(
                               backgroundColor: _filtroActivo == 'Frecuentes'
@@ -320,7 +315,9 @@ class _StoresScreenState extends State<StoresScreen> {
                                     ? PantryColors.green
                                     : PantryColors.border,
                               ),
-                              padding: const EdgeInsets.symmetric(horizontal: 11),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 11,
+                              ),
                               minimumSize: const Size(0, 36),
                             ),
                           ),
@@ -372,7 +369,10 @@ class _StoresScreenState extends State<StoresScreen> {
                             _filtroTexto.isNotEmpty
                                 ? 'No se encontraron tiendas que coincidan con "$_filtroTexto"'
                                 : 'No hay tiendas registradas.',
-                            style: const TextStyle(color: PantryColors.muted, fontSize: 12),
+                            style: const TextStyle(
+                              color: PantryColors.muted,
+                              fontSize: 12,
+                            ),
                           ),
                         ),
                       ),
@@ -387,9 +387,10 @@ class _StoresScreenState extends State<StoresScreen> {
                           return Padding(
                             padding: const EdgeInsets.only(bottom: 14),
                             child: CatalogSwipeActions(
-                              key: ValueKey('store-swipe-${tienda.id ?? tienda.nombre}'),
+                              key: ValueKey(
+                                'store-swipe-${tienda.id ?? tienda.nombre}',
+                              ),
                               name: tienda.nombre,
-                              onEdit: () => _abrirEditarTienda(tienda),
                               onDelete: () => _intentarEliminarTienda(tienda),
                               child: _StoreCard(
                                 tienda: tienda,
@@ -400,9 +401,7 @@ class _StoresScreenState extends State<StoresScreen> {
                         },
                       ),
                     ),
-                    const SliverToBoxAdapter(
-                      child: SizedBox(height: 90),
-                    ),
+                  const SliverToBoxAdapter(child: SizedBox(height: 90)),
                 ],
               ),
             ),
@@ -446,13 +445,17 @@ class _StoreCard extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.fromLTRB(14, 12, 10, 13),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(17),
-          border: Border.all(color: PantryColors.border),
-        ),
+  Widget build(BuildContext context) => Material(
+    color: Colors.white,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(17),
+      side: const BorderSide(color: PantryColors.border),
+    ),
+    clipBehavior: Clip.antiAlias,
+    child: InkWell(
+      onTap: onEdit,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 13),
         child: Column(
           children: [
             Row(
@@ -492,7 +495,10 @@ class _StoreCard extends StatelessWidget {
                           if (tienda.totalCompras >= 3) ...[
                             const SizedBox(width: 5),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 5,
+                                vertical: 2,
+                              ),
                               decoration: BoxDecoration(
                                 color: PantryColors.greenLight,
                                 borderRadius: BorderRadius.circular(6),
@@ -535,28 +541,6 @@ class _StoreCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                PopupMenuButton<String>(
-                  tooltip: 'Opciones de ${tienda.nombre}',
-                  onSelected: (value) {
-                    if (value == 'edit') {
-                      onEdit();
-                    }
-                  },
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 150),
-                  icon: const Icon(
-                    Icons.more_vert_rounded,
-                    size: 18,
-                    color: PantryColors.muted,
-                  ),
-                  itemBuilder: (_) => const [
-                    PopupMenuItem(value: 'edit', child: Text('Editar tienda')),
-                    PopupMenuItem(
-                      value: 'history',
-                      child: Text('Historial de compras'),
-                    ),
-                  ],
-                ),
               ],
             ),
             const SizedBox(height: 11),
@@ -574,23 +558,34 @@ class _StoreCard extends StatelessWidget {
                     color: PantryColors.green,
                   ),
                   const SizedBox(width: 5),
-                  Text(
-                    '${tienda.totalCompras} ${tienda.totalCompras == 1 ? 'compra registrada' : 'compras registradas'}',
-                    style: const TextStyle(
-                      fontSize: 10,
-                      color: PantryColors.green,
-                      fontWeight: FontWeight.w600,
+                  Expanded(
+                    flex: 2,
+                    child: Text(
+                      '${tienda.totalCompras} ${tienda.totalCompras == 1 ? 'compra registrada' : 'compras registradas'}',
+                      style: const TextStyle(
+                        fontSize: 10,
+                        color: PantryColors.green,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
-                  const Spacer(),
-                  Text(
-                    tienda.tipoTiendaNombre ?? 'Supermercado',
-                    style: const TextStyle(fontSize: 10, color: PantryColors.muted),
+                  const SizedBox(width: 12),
+                  Flexible(
+                    child: Text(
+                      tienda.tipoTiendaNombre ?? 'Supermercado',
+                      textAlign: TextAlign.end,
+                      style: const TextStyle(
+                        fontSize: 10,
+                        color: PantryColors.muted,
+                      ),
+                    ),
                   ),
                 ],
               ),
             ),
           ],
         ),
-      );
+      ),
+    ),
+  );
 }
