@@ -94,9 +94,14 @@ class LoteDao {
         l.*,
         p.nombre AS producto_nombre,
         p.unidad_medida AS unidad,
-        p.imagen AS producto_imagen
+        p.imagen AS producto_imagen,
+        p.stock_minimo AS stock_minimo,
+        p.zona_almacenamiento AS zona_almacenamiento,
+        c.nombre AS categoria_nombre,
+        (SELECT COALESCE(SUM(l2.cantidad), 0.0) FROM Lote l2 WHERE l2.producto_id = p.id AND l2.cantidad > 0) AS stock_total_producto
       FROM Lote l
       INNER JOIN Producto p ON l.producto_id = p.id
+      LEFT JOIN Categoria c ON p.categoria_id = c.id
       WHERE l.cantidad > 0 AND l.fecha_caducidad = ?
       ORDER BY p.nombre ASC;
     ''',
@@ -113,9 +118,14 @@ class LoteDao {
         l.*,
         p.nombre AS producto_nombre,
         p.unidad_medida AS unidad,
-        p.imagen AS producto_imagen
+        p.imagen AS producto_imagen,
+        p.stock_minimo AS stock_minimo,
+        p.zona_almacenamiento AS zona_almacenamiento,
+        c.nombre AS categoria_nombre,
+        (SELECT COALESCE(SUM(l2.cantidad), 0.0) FROM Lote l2 WHERE l2.producto_id = p.id AND l2.cantidad > 0) AS stock_total_producto
       FROM Lote l
       INNER JOIN Producto p ON l.producto_id = p.id
+      LEFT JOIN Categoria c ON p.categoria_id = c.id
       WHERE l.cantidad > 0
       ORDER BY l.fecha_caducidad ASC;
     ''');
@@ -263,5 +273,61 @@ class LoteDao {
       where: 'id = ?',
       whereArgs: [idLote],
     );
+  }
+
+  Future<void> actualizarAlarma(
+    int idLote, {
+    required int alarmaId,
+    required int alarmaActiva,
+  }) async {
+    final db = await _db;
+    await db.update(
+      'Lote',
+      {'alarma_id': alarmaId, 'alarma_activa': alarmaActiva},
+      where: 'id = ?',
+      whereArgs: [idLote],
+    );
+  }
+
+  Future<Lote?> obtenerLotePorId(int idLote) async {
+    final db = await _db;
+    final res = await db.rawQuery(
+      '''
+      SELECT 
+        l.*,
+        p.nombre AS producto_nombre,
+        p.unidad_medida AS unidad,
+        p.imagen AS producto_imagen
+      FROM Lote l
+      INNER JOIN Producto p ON l.producto_id = p.id
+      WHERE l.id = ?;
+    ''',
+      [idLote],
+    );
+    if (res.isEmpty) return null;
+    return Lote.fromMap(res.first);
+  }
+
+  Future<void> actualizarConfiguracionAlarma(
+    int idLote, {
+    int? alarmaActiva,
+    String? horaAviso,
+    String? fechaCaducidad,
+  }) async {
+    final db = await _db;
+    final map = <String, dynamic>{};
+    if (alarmaActiva != null) map['alarma_activa'] = alarmaActiva;
+    if (horaAviso != null && horaAviso.isNotEmpty) map['hora_aviso'] = horaAviso;
+    if (fechaCaducidad != null && fechaCaducidad.isNotEmpty) {
+      map['fecha_caducidad'] = fechaCaducidad;
+    }
+    if (map.isNotEmpty) {
+      await db.update(
+        'Lote',
+        map,
+        where: 'id = ?',
+        whereArgs: [idLote],
+      );
+    }
   }
 }

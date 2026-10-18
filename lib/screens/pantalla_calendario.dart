@@ -9,6 +9,8 @@ import 'package:table_calendar/table_calendar.dart';
 import '../components/tema_alacena.dart';
 import '../presentation/modelos_vista_calendario.dart';
 import '../database/daos/lote_dao.dart';
+import '../widgets/dialogo_configuracion_alerta.dart';
+import '../widgets/miniatura_producto.dart';
 import 'pantalla_alertas_dia.dart';
 
 // Calendario con alertas reales de caducidad por lote
@@ -85,6 +87,111 @@ class _CalendarScreenState extends State<CalendarScreen> {
     if (day.year >= 2000 && day.year <= 2100) {
       setState(() => _focusedDay = day);
     }
+  }
+
+  Future<void> _abrirSelectorParaConfigurarAlerta() async {
+    final lotes = await _loteDao.obtenerTodosLotesActivos();
+    if (!mounted) return;
+    if (lotes.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No hay productos con lotes activos registrados.'),
+          backgroundColor: PantryColors.orange,
+        ),
+      );
+      return;
+    }
+
+    await showModalBottomSheet<void>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Row(
+                children: [
+                  const Icon(Icons.alarm_rounded, color: PantryColors.green),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Configurar recordatorio de producto',
+                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 18),
+                    onPressed: () => Navigator.of(ctx).pop(),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: lotes.length,
+                separatorBuilder: (context, index) => const Divider(height: 1),
+                itemBuilder: (ctx, idx) {
+                  final lote = lotes[idx];
+                  final caducidad =
+                      DateTime.tryParse(lote.fechaCaducidad) ?? DateTime.now();
+                  return ListTile(
+                    leading: ProductThumbnail(
+                      kind: ProductThumbnailKind.placeholder,
+                      imagePath: lote.productoImagen,
+                      size: 40,
+                    ),
+                    title: Text(
+                      lote.productoNombre ?? 'Producto',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                      ),
+                    ),
+                    subtitle: Text(
+                      'Caduca: ${caducidad.day.toString().padLeft(2, '0')}/${caducidad.month.toString().padLeft(2, '0')}/${caducidad.year} · ${lote.alarmaActiva == 1 ? "Aviso: ${lote.horaAviso}" : "Sin alarma"}',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: PantryColors.muted,
+                      ),
+                    ),
+                    trailing: Icon(
+                      lote.alarmaActiva == 1
+                          ? Icons.notifications_active_rounded
+                          : Icons.notifications_off_outlined,
+                      color: lote.alarmaActiva == 1
+                          ? PantryColors.orange
+                          : PantryColors.muted,
+                      size: 20,
+                    ),
+                    onTap: () {
+                      Navigator.of(ctx).pop();
+                      DialogoConfiguracionAlerta.mostrar(
+                        context,
+                        loteId: lote.id!,
+                        productoNombre: lote.productoNombre ?? 'Producto',
+                        lotCode: lote.id == null ? 'Lote' : 'Lote #${lote.id}',
+                        alarmaActiva: lote.alarmaActiva,
+                        horaAviso: lote.horaAviso,
+                        fechaCaducidad: caducidad,
+                        loteDao: _loteDao,
+                        onActualizado: _cargarAlertasDesdeBD,
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -269,29 +376,52 @@ class _CalendarScreenState extends State<CalendarScreen> {
                             ),
                             markerBuilder: (_, day, events) {
                               if (events.isEmpty) return null;
+                              final total = events.length;
+                              const maxDots = 5;
+                              final mostrarBadge = total > maxDots;
+                              final dotsCount = mostrarBadge ? maxDots : total;
+                              final restantes = total - maxDots;
+
                               return Positioned(
                                 left: 0,
                                 right: 0,
                                 bottom: 2,
                                 child: Semantics(
-                                  label: '${events.length} alertas',
-                                  child: Wrap(
-                                    alignment: WrapAlignment.center,
-                                    spacing: 2,
-                                    runSpacing: 2,
+                                  label: '$total alertas',
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    mainAxisSize: MainAxisSize.min,
                                     children: [
-                                      for (var i = 0; i < events.length; i++)
+                                      for (var i = 0; i < dotsCount; i++)
                                         Container(
                                           key: ValueKey(
                                             'calendar-marker-${day.year}-${day.month}-${day.day}-$i',
                                           ),
-                                          width: 4,
-                                          height: 4,
+                                          width: 3.5,
+                                          height: 3.5,
+                                          margin: const EdgeInsets.symmetric(
+                                            horizontal: 0.8,
+                                          ),
                                           decoration: BoxDecoration(
                                             color: events[i].status.color,
                                             shape: BoxShape.circle,
                                           ),
                                         ),
+                                      if (mostrarBadge) ...[
+                                        const SizedBox(width: 1.5),
+                                        Text(
+                                          '+$restantes',
+                                          key: ValueKey(
+                                            'calendar-more-${day.year}-${day.month}-${day.day}',
+                                          ),
+                                          style: const TextStyle(
+                                            fontSize: 7.5,
+                                            fontWeight: FontWeight.w700,
+                                            color: PantryColors.green,
+                                            height: 1,
+                                          ),
+                                        ),
+                                      ],
                                     ],
                                   ),
                                 ),
@@ -305,23 +435,54 @@ class _CalendarScreenState extends State<CalendarScreen> {
                   SliverPadding(
                     padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
                     sliver: SliverToBoxAdapter(
-                      child: TextButton.icon(
-                        onPressed: () => _openDay(_selectedDay, _focusedDay),
-                        icon: const Icon(Icons.inventory_2_outlined, size: 16),
-                        label: const Text(
-                          'Gestionar inventario de esta fecha',
-                          style: TextStyle(fontSize: 11),
-                        ),
-                        style: TextButton.styleFrom(
-                          backgroundColor: PantryColors.greenLight,
-                          padding: const EdgeInsets.symmetric(
-                            vertical: 14,
-                            horizontal: 12,
+                      child: Column(
+                        children: [
+                          SizedBox(
+                            width: double.infinity,
+                            child: TextButton.icon(
+                              onPressed: () => _openDay(_selectedDay, _focusedDay),
+                              icon: const Icon(Icons.inventory_2_outlined, size: 16),
+                              label: const Text(
+                                'Gestionar inventario de esta fecha',
+                                style: TextStyle(fontSize: 11),
+                              ),
+                              style: TextButton.styleFrom(
+                                backgroundColor: PantryColors.greenLight,
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 14,
+                                  horizontal: 12,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(9),
+                                ),
+                              ),
+                            ),
                           ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(9),
+                          const SizedBox(height: 8),
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              key: const Key('btn_configurar_alertas_calendario'),
+                              onPressed: _abrirSelectorParaConfigurarAlerta,
+                              icon: const Icon(Icons.alarm_rounded, size: 16),
+                              label: const Text(
+                                'Configurar recordatorio de caducidad',
+                                style: TextStyle(fontSize: 11),
+                              ),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: PantryColors.ink,
+                                side: const BorderSide(color: PantryColors.border),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 12,
+                                  horizontal: 12,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(9),
+                                ),
+                              ),
+                            ),
                           ),
-                        ),
+                        ],
                       ),
                     ),
                   ),

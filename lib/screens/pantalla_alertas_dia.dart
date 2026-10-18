@@ -3,10 +3,12 @@ import 'package:flutter/material.dart';
 import '../components/tema_alacena.dart';
 import '../database/daos/lote_dao.dart';
 import '../presentation/modelos_vista_calendario.dart';
+import '../services/servicio_notificaciones.dart';
 import '../widgets/barra_navegacion_inferior.dart';
 import '../widgets/encabezado_seccion.dart';
 import '../widgets/miniatura_producto.dart';
 import '../widgets/editor_fecha_caducidad.dart';
+import '../widgets/dialogo_configuracion_alerta.dart';
 
 // Consulta de los productos que caducan en la fecha seleccionada.
 class DayAlertsScreen extends StatefulWidget {
@@ -30,6 +32,9 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
   void initState() {
     super.initState();
     _alertas = List.of(widget.alerts);
+    if (_alertas.isEmpty) {
+      _recargarAlertas();
+    }
   }
 
   void _close() => Navigator.of(context).pop();
@@ -135,6 +140,79 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
     );
   }
 
+  Future<void> _abrirConfiguracionAlerta(CalendarAlertPreview alert) async {
+    final id = alert.loteId;
+    if (id == null) return;
+    await DialogoConfiguracionAlerta.mostrar(
+      context,
+      loteId: id,
+      productoNombre: alert.name,
+      lotCode: alert.lotCode,
+      alarmaActiva: alert.alarmaActiva,
+      horaAviso: alert.horaAviso,
+      fechaCaducidad: widget.day,
+      loteDao: _loteDao,
+      onActualizado: _recargarAlertas,
+    );
+  }
+
+  void _seleccionarLoteParaConfigurarAlerta(List<CalendarAlertPreview> lista) {
+    if (lista.isEmpty) return;
+    if (lista.length == 1) {
+      _abrirConfiguracionAlerta(lista.first);
+      return;
+    }
+    showModalBottomSheet<void>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Text(
+                'Selecciona el producto a configurar',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ),
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: lista.length,
+                itemBuilder: (ctx, idx) {
+                  final a = lista[idx];
+                  return ListTile(
+                    leading: const Icon(
+                      Icons.alarm_rounded,
+                      color: PantryColors.green,
+                    ),
+                    title: Text(
+                      a.name,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    subtitle: Text(
+                      '${a.lotCode} · ${a.alarmaActiva == 1 ? "Aviso: ${a.horaAviso}" : "Sin alarma"}',
+                    ),
+                    trailing: const Icon(Icons.chevron_right, size: 20),
+                    onTap: () {
+                      Navigator.of(ctx).pop();
+                      _abrirConfiguracionAlerta(a);
+                    },
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final alerts = _alertas;
@@ -150,8 +228,25 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
                 : _clearView == false
                 ? withAlerts
                 : alerts)
-            .where((a) => _status == null || a.status == _status)
+            .where((a) {
+              if (_status == null) return true;
+              if (_status == CalendarPreviewStatus.lowStock) {
+                return a.status == CalendarPreviewStatus.lowStock ||
+                    a.porAgotarse;
+              }
+              return a.status == _status;
+            })
             .toList();
+
+    int contarAlertasPorEstado(CalendarPreviewStatus status) {
+      return withAlerts
+          .where(
+            (alert) =>
+                alert.status == status ||
+                (status == CalendarPreviewStatus.lowStock && alert.porAgotarse),
+          )
+          .length;
+    }
     const weekdays = [
       'Lunes',
       'Martes',
@@ -217,6 +312,65 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
                               ],
                             ),
                           ),
+                          IconButton(
+                            key: const Key('btn_probar_alarma'),
+                            onPressed: () async {
+                              final primerProducto = _alertas.isNotEmpty
+                                  ? _alertas.first.name
+                                  : 'Producto de tu alacena';
+                              final iso =
+                                  '${widget.day.year.toString().padLeft(4, '0')}-${widget.day.month.toString().padLeft(2, '0')}-${widget.day.day.toString().padLeft(2, '0')}';
+                              await ServicioNotificaciones()
+                                  .lanzarNotificacionPrueba(
+                                nombreProducto: primerProducto,
+                                fechaIso: iso,
+                                segundos: 1,
+                              );
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      'Alarma lanzada. Toca la notificación para abrir esta pantalla.',
+                                    ),
+                                    backgroundColor: PantryColors.green,
+                                    duration: Duration(seconds: 3),
+                                  ),
+                                );
+                              }
+                            },
+                            tooltip: 'Probar alarma local',
+                            style: IconButton.styleFrom(
+                              backgroundColor: PantryColors.orangeLight,
+                              foregroundColor: PantryColors.orange,
+                            ),
+                            icon: const Icon(
+                              Icons.notifications_active_rounded,
+                              size: 20,
+                            ),
+                          ),
+                          IconButton(
+                            key: const Key('btn_configurar_alerta_dia'),
+                            onPressed: () {
+                              final lista =
+                                  visible.isNotEmpty ? visible : _alertas;
+                              if (lista.isEmpty) return;
+                              if (lista.length == 1) {
+                                _abrirConfiguracionAlerta(lista.first);
+                              } else {
+                                _seleccionarLoteParaConfigurarAlerta(lista);
+                              }
+                            },
+                            tooltip: 'Configurar recordatorio o alarma',
+                            style: IconButton.styleFrom(
+                              backgroundColor: PantryColors.orangeLight,
+                              foregroundColor: PantryColors.orange,
+                            ),
+                            icon: const Icon(
+                              Icons.alarm_rounded,
+                              size: 20,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
                           IconButton(
                             onPressed: () => _seleccionarLoteParaEditarFecha(
                               visible.isNotEmpty ? visible : _alertas,
@@ -292,7 +446,7 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
                                   padding: const EdgeInsets.only(left: 6),
                                   child: ChoiceChip(
                                     label: Text(
-                                      '${status.label} (${withAlerts.where((alert) => alert.status == status).length})',
+                                      '${status.label} (${contarAlertasPorEstado(status)})',
                                     ),
                                     avatar: Icon(
                                       Icons.circle,
@@ -350,109 +504,182 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
                       ),
                     )
                   else
-                    SliverPadding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      sliver: SliverList.builder(
-                        itemCount: visible.length,
-                        itemBuilder: (_, index) => _DayProductCard(
-                          alert: visible[index],
-                          day: widget.day,
+                      SliverPadding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        sliver: SliverList.builder(
+                          itemCount: visible.length,
+                          itemBuilder: (_, index) => _DayProductCard(
+                            alert: visible[index],
+                            day: widget.day,
+                            onConfigurarAlerta: _abrirConfiguracionAlerta,
+                          ),
                         ),
                       ),
-                    ),
-                ],
+                  ],
+                ),
               ),
+              bottomNavigationBar: const AppBottomNavigation(selectedIndex: 1),
             ),
-            bottomNavigationBar: const AppBottomNavigation(selectedIndex: 1),
           ),
         ),
-      ),
-    );
+      );
+    }
   }
-}
 
-class _DayProductCard extends StatelessWidget {
-  const _DayProductCard({required this.alert, required this.day});
-  final CalendarAlertPreview alert;
-  final DateTime day;
+  class _DayProductCard extends StatelessWidget {
+    const _DayProductCard({
+      required this.alert,
+      required this.day,
+      this.onConfigurarAlerta,
+    });
+    final CalendarAlertPreview alert;
+    final DateTime day;
+    final ValueChanged<CalendarAlertPreview>? onConfigurarAlerta;
 
-  @override
-  Widget build(BuildContext context) => Container(
-    margin: const EdgeInsets.only(bottom: 12),
-    padding: const EdgeInsets.all(14),
-    decoration: BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(16),
-      border: Border.all(color: PantryColors.border),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ProductThumbnail(
-              kind: alert.thumbnail,
-              imagePath: alert.imagePath,
-              size: 54,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    alert.name,
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    alert.location,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: PantryColors.muted,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: alert.status.background,
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
+    @override
+    Widget build(BuildContext context) => Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: PantryColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ProductThumbnail(
+                kind: alert.thumbnail,
+                imagePath: alert.imagePath,
+                size: 54,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Icon(
-                          alert.status.icon,
-                          size: 13,
-                          color: alert.status.color,
-                        ),
-                        const SizedBox(width: 5),
-                        Flexible(
+                        Expanded(
                           child: Text(
-                            alert.status.label,
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: alert.status.color,
-                              fontWeight: FontWeight.w600,
+                            alert.name,
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
                             ),
+                          ),
+                        ),
+                        IconButton(
+                          key: Key('btn_config_alerta_${alert.loteId}'),
+                          icon: Icon(
+                            alert.alarmaActiva == 1
+                                ? Icons.notifications_active_rounded
+                                : Icons.notifications_off_outlined,
+                            size: 20,
+                            color: alert.alarmaActiva == 1
+                                ? PantryColors.orange
+                                : PantryColors.muted,
+                          ),
+                          tooltip: 'Configurar recordatorio o alarma',
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          onPressed: () => onConfigurarAlerta?.call(alert),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      alert.location,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: PantryColors.muted,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: alert.status.background,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                alert.status.icon,
+                                size: 13,
+                                color: alert.status.color,
+                              ),
+                              const SizedBox(width: 5),
+                              Text(
+                                alert.status.label,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: alert.status.color,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: alert.alarmaActiva == 1
+                                ? PantryColors.orangeLight
+                                : PantryColors.background,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                alert.alarmaActiva == 1
+                                    ? Icons.access_time_rounded
+                                    : Icons.alarm_off_outlined,
+                                size: 13,
+                                color: alert.alarmaActiva == 1
+                                    ? PantryColors.orange
+                                    : PantryColors.muted,
+                              ),
+                              const SizedBox(width: 5),
+                              Text(
+                                alert.alarmaActiva == 1
+                                    ? 'Aviso: ${alert.horaAviso}'
+                                    : 'Sin alarma',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: alert.alarmaActiva == 1
+                                      ? PantryColors.orange
+                                      : PantryColors.muted,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-          ],
-        ),
+            ],
+          ),
         const SizedBox(height: 12),
         Row(
           children: [

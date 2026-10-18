@@ -13,7 +13,7 @@ import '../presentation/modelos_vista_alacena.dart';
 import '../widgets/tarjeta_producto.dart';
 import '../widgets/acciones_deslizables_catalogo.dart';
 
-/// Maqueta de Inicio
+// Maqueta de Inicio
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
@@ -26,6 +26,7 @@ class HomeScreen extends StatefulWidget {
     this.onAddToCart,
     this.onInventoryAction,
     this.cartCount = 0,
+    this.onEditProduct,
     this.onDeleteProduct,
     this.sections = const [],
   });
@@ -39,6 +40,7 @@ class HomeScreen extends StatefulWidget {
   final ValueChanged<PantryProductPreview>? onAddToCart;
   final ValueChanged<PantryProductPreview>? onInventoryAction;
   final num cartCount;
+  final ValueChanged<PantryProductPreview>? onEditProduct;
   final ValueChanged<PantryProductPreview>? onDeleteProduct;
   final List<PantrySectionPreview>? sections;
 
@@ -275,6 +277,8 @@ class _HomeScreenState extends State<HomeScreen> {
                               child: CatalogSwipeActions(
                                 key: ValueKey('product-swipe-${product.key}'),
                                 name: product.name,
+                                onEdit: () =>
+                                    (widget.onEditProduct ?? widget.onProductTap)?.call(product),
                                 onDelete: () =>
                                     widget.onDeleteProduct?.call(product),
                                 child: ProductCard(

@@ -19,6 +19,8 @@ import 'presentation/acciones_inventario.dart';
 import 'database/daos/producto_dao.dart';
 import 'presentation/modelos_vista_alacena.dart';
 import 'models/borrador_formulario.dart';
+import 'screens/pantalla_alertas_dia.dart';
+import 'services/servicio_notificaciones.dart';
 
 // Aplicacion principal
 void main() {
@@ -47,6 +49,33 @@ class _AlacenaPreviewAppState extends State<AlacenaPreviewApp> {
     _lists.addListener(_onCartChanged);
     _cargarDatosBD();
     _verificarRecuperacionCamara();
+    _inicializarNotificaciones();
+  }
+
+  Future<void> _inicializarNotificaciones() async {
+    final servicio = ServicioNotificaciones();
+    await servicio.inicializar(onNotificationOpened: _navegarAAlertasDelDia);
+    await servicio.solicitarPermisos();
+  }
+
+  void _navegarAAlertasDelDia(String fechaIso) {
+    DateTime fecha;
+    try {
+      fecha = DateTime.parse(fechaIso);
+    } catch (_) {
+      fecha = DateTime.now();
+    }
+    final nav = _navigatorKey.currentState;
+    if (nav != null) {
+      nav.push(
+        MaterialPageRoute(
+          builder: (_) => DayAlertsScreen(
+            day: DateTime(fecha.year, fecha.month, fecha.day),
+            alerts: const [],
+          ),
+        ),
+      );
+    }
   }
 
   void _onCartChanged() async {

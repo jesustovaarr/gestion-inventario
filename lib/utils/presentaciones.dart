@@ -5,6 +5,7 @@ enum PresentacionCompra {
   pieza('Pieza', 'piezas'),
   bolsa('Bolsa', 'bolsas'),
   botella('Botella', 'botellas'),
+  lata('Lata', 'latas'),
   carton('Cartón', 'cartones'),
   caja('Caja', 'cajas'),
   paquete('Paquete', 'paquetes'),

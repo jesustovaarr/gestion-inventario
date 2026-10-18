@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../components/tema_alacena.dart';
 
 import '../models/lote_model.dart';
+import '../services/servicio_notificaciones.dart';
 import '../utils/cantidades.dart';
 import '../utils/presentaciones.dart';
 
@@ -42,7 +43,21 @@ class _ProductLotsEditorState extends State<ProductLotsEditor> {
     super.initState();
     _drafts = widget.lotes
         .where((l) => l.cantidad > 0)
-        .map(_LotDraft.new)
+        .map((l) {
+          var lote = l;
+          if (lote.alarmaActiva == 1) {
+            final f = DateTime.tryParse(lote.fechaCaducidad);
+            if (f != null &&
+                ServicioNotificaciones.validarMomentoAlarma(
+                  fechaCaducidad: f,
+                  horaAviso: lote.horaAviso,
+                ) !=
+                    null) {
+              lote = lote.copyWith(alarmaActiva: 0);
+            }
+          }
+          return _LotDraft(lote);
+        })
         .toList();
   }
 
@@ -118,11 +133,28 @@ class _ProductLotsEditorState extends State<ProductLotsEditor> {
     );
     _pickingDate = false;
     if (fecha == null || !mounted) return;
+    final errorAlarma = ServicioNotificaciones.validarMomentoAlarma(
+      fechaCaducidad: fecha,
+      horaAviso: draft.lote.horaAviso,
+    );
+    final alarmaEstabaActiva = draft.lote.alarmaActiva == 1;
     setState(() {
       draft.lote = draft.lote.copyWith(
         fechaCaducidad: fecha.toIso8601String().substring(0, 10),
+        alarmaActiva: errorAlarma != null ? 0 : draft.lote.alarmaActiva,
       );
     });
+    if (errorAlarma != null && alarmaEstabaActiva && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'La fecha seleccionada ya pasó. La alarma se ha desactivado.',
+          ),
+          backgroundColor: PantryColors.orange,
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
     _emit();
   }
 
@@ -139,10 +171,30 @@ class _ProductLotsEditorState extends State<ProductLotsEditor> {
     );
     final hora = await showTimePicker(context: context, initialTime: inicial);
     if (hora == null || !mounted) return;
+    final nuevaHora =
+        '${hora.hour.toString().padLeft(2, '0')}:${hora.minute.toString().padLeft(2, '0')}';
+    final f = DateTime.tryParse(draft.lote.fechaCaducidad);
+    if (f != null && draft.lote.alarmaActiva == 1) {
+      final error = ServicioNotificaciones.validarMomentoAlarma(
+        fechaCaducidad: f,
+        horaAviso: nuevaHora,
+      );
+      if (error != null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(error),
+              backgroundColor: PantryColors.red,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+        return;
+      }
+    }
     setState(() {
       draft.lote = draft.lote.copyWith(
-        horaAviso:
-            '${hora.hour.toString().padLeft(2, '0')}:${hora.minute.toString().padLeft(2, '0')}',
+        horaAviso: nuevaHora,
       );
     });
     _emit();
@@ -250,6 +302,26 @@ class _ProductLotsEditorState extends State<ProductLotsEditor> {
                     title: const Text('Aviso de caducidad'),
                     value: draft.lote.alarmaActiva == 1,
                     onChanged: (v) {
+                      if (v) {
+                        final f = DateTime.tryParse(draft.lote.fechaCaducidad);
+                        if (f != null) {
+                          final error =
+                              ServicioNotificaciones.validarMomentoAlarma(
+                                fechaCaducidad: f,
+                                horaAviso: draft.lote.horaAviso,
+                              );
+                          if (error != null) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(error),
+                                backgroundColor: PantryColors.red,
+                                duration: const Duration(seconds: 3),
+                              ),
+                            );
+                            return;
+                          }
+                        }
+                      }
                       setState(() {
                         draft.lote = draft.lote.copyWith(
                           alarmaActiva: v ? 1 : 0,

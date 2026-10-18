@@ -1,5 +1,6 @@
 import '../models/borrador_formulario.dart';
 import '../models/datos_escaneo_producto.dart';
+import '../services/servicio_notificaciones.dart';
 import '../widgets/selector_foto_producto.dart';
 import '../widgets/campo_codigo_barras.dart';
 
@@ -127,6 +128,13 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       text:
           '${_fechaCaducidad.day.toString().padLeft(2, '0')}/${_fechaCaducidad.month.toString().padLeft(2, '0')}/${_fechaCaducidad.year}',
     );
+    final errorAlarmaInicial = ServicioNotificaciones.validarMomentoAlarma(
+      fechaCaducidad: _fechaCaducidad,
+      horaAviso: _time,
+    );
+    if (errorAlarmaInicial != null) {
+      _reminder = false;
+    }
     _ultimaTiendaId = widget.draft?.ultimaTiendaId;
     _cargarIniciales();
   }
@@ -295,17 +303,72 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     final picked = await showDatePicker(
       context: context,
       initialDate: _fechaCaducidad,
-      firstDate: DateTime(2020),
+      firstDate: DateTime(2000),
       lastDate: DateTime(2035),
     );
     _eligiendoFecha = false;
     if (picked != null && mounted) {
+      final errorAlarma = ServicioNotificaciones.validarMomentoAlarma(
+        fechaCaducidad: picked,
+        horaAviso: _time,
+      );
+      final alarmaEstabaActiva = _reminder;
       setState(() {
         _fechaCaducidad = picked;
         _dateController.text =
             '${picked.day.toString().padLeft(2, '0')}/${picked.month.toString().padLeft(2, '0')}/${picked.year}';
+        if (errorAlarma != null && _reminder) {
+          _reminder = false;
+        }
       });
+      if (errorAlarma != null && alarmaEstabaActiva && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'La fecha seleccionada ya pasó. La alarma se ha desactivado.',
+            ),
+            backgroundColor: PantryColors.orange,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
     }
+  }
+
+  Future<void> _seleccionarHoraAviso() async {
+    if (!_reminder) return;
+    final (hour, minute) = ServicioNotificaciones.parsearHora(_time);
+    final inicial = TimeOfDay(hour: hour, minute: minute);
+    final hora = await showTimePicker(
+      context: context,
+      initialTime: inicial,
+    );
+    if (hora == null || !mounted) return;
+    final h = hora.hourOfPeriod == 0 ? 12 : hora.hourOfPeriod;
+    final m = hora.minute.toString().padLeft(2, '0');
+    final ampm = hora.period == DayPeriod.am ? 'AM' : 'PM';
+    final nuevaHora = '${h.toString().padLeft(2, '0')}:$m $ampm';
+
+    final error = ServicioNotificaciones.validarMomentoAlarma(
+      fechaCaducidad: _fechaCaducidad,
+      horaAviso: nuevaHora,
+    );
+    if (error != null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(error),
+            backgroundColor: PantryColors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+      return;
+    }
+
+    setState(() {
+      _time = nuevaHora;
+    });
   }
 
   Future<void> _guardarBorradorActual() async {
@@ -472,6 +535,28 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
               )
               .toList(),
         );
+
+        for (final l in _lotesEdicion) {
+          final fecha = DateTime.tryParse(l.fechaCaducidad);
+          final errorAlarma = fecha != null
+              ? ServicioNotificaciones.validarMomentoAlarma(
+                  fechaCaducidad: fecha,
+                  horaAviso: l.horaAviso,
+                )
+              : 'Fecha inválida';
+
+          if (l.alarmaActiva == 1 && l.id != null && errorAlarma == null) {
+            ServicioNotificaciones().programarAlertaLote(
+              loteId: l.id!,
+              nombreProducto: _name.trim(),
+              fechaCaducidad: l.fechaCaducidad,
+              horaAviso: l.horaAviso,
+            );
+          } else if (l.id != null) {
+            ServicioNotificaciones().cancelarAlerta(l.id!);
+          }
+        }
+
         widget.onSaved?.call(actualizado.id!);
 
         if (!mounted) return;
@@ -485,6 +570,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
             ),
           );
           await _limpiarBorradorSiExiste();
+          if (!mounted) return;
           Navigator.of(context).pop(true);
         }
       } else {
@@ -504,7 +590,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
         final nuevoId = await _productoDao.insertar(nuevoProd);
 
         if (!widget.catalogOnly && (parsedQty ?? 0) > 0) {
-          await _loteDao.insertarLote(
+          final nuevoLoteId = await _loteDao.insertarLote(
             Lote(
               productoId: nuevoId,
               cantidad: parsedQty!,
@@ -515,6 +601,31 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
               contenidoEnvase: _packaging.esEnvase ? content! : 1,
             ),
           );
+          if (_reminder) {
+            final errorAlarma = ServicioNotificaciones.validarMomentoAlarma(
+              fechaCaducidad: _fechaCaducidad,
+              horaAviso: _time,
+            );
+            if (errorAlarma == null) {
+              await _loteDao.actualizarAlarma(
+                nuevoLoteId,
+                alarmaId: nuevoLoteId,
+                alarmaActiva: 1,
+              );
+              await ServicioNotificaciones().programarAlertaLote(
+                loteId: nuevoLoteId,
+                nombreProducto: _name.trim(),
+                fechaCaducidad: _formatearFechaIso(_fechaCaducidad),
+                horaAviso: _time,
+              );
+            } else {
+              await _loteDao.actualizarAlarma(
+                nuevoLoteId,
+                alarmaId: nuevoLoteId,
+                alarmaActiva: 0,
+              );
+            }
+          }
         }
 
         widget.onSaved?.call(nuevoId);
@@ -535,6 +646,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
             ),
           );
           await _limpiarBorradorSiExiste();
+          if (!mounted) return;
           Navigator.of(context).pop(true);
         }
       }
@@ -928,9 +1040,35 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                                           ),
                                           Switch(
                                             value: _reminder,
-                                            onChanged: (value) => setState(
-                                              () => _reminder = value,
-                                            ),
+                                            onChanged: (value) {
+                                              if (value) {
+                                                final error =
+                                                    ServicioNotificaciones
+                                                        .validarMomentoAlarma(
+                                                          fechaCaducidad:
+                                                              _fechaCaducidad,
+                                                          horaAviso: _time,
+                                                        );
+                                                if (error != null) {
+                                                  ScaffoldMessenger.of(
+                                                    context,
+                                                  ).showSnackBar(
+                                                    SnackBar(
+                                                      content: Text(error),
+                                                      backgroundColor:
+                                                          PantryColors.red,
+                                                      duration: const Duration(
+                                                        seconds: 3,
+                                                      ),
+                                                    ),
+                                                  );
+                                                  return;
+                                                }
+                                              }
+                                              setState(
+                                                () => _reminder = value,
+                                              );
+                                            },
                                           ),
                                         ],
                                       ),
@@ -952,36 +1090,45 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                                               ),
                                             ),
                                           ),
-                                          DropdownButton<String>(
-                                            value: _time,
-                                            underline: const SizedBox.shrink(),
-                                            borderRadius: BorderRadius.circular(
-                                              10,
+                                          InkWell(
+                                            key: const Key('btn_hora_aviso'),
+                                            onTap: _reminder ? _seleccionarHoraAviso : null,
+                                            borderRadius: BorderRadius.circular(8),
+                                            child: Container(
+                                              padding: const EdgeInsets.symmetric(
+                                                horizontal: 10,
+                                                vertical: 6,
+                                              ),
+                                              decoration: BoxDecoration(
+                                                color: _reminder
+                                                    ? PantryColors.greenLight
+                                                    : const Color(0xFFF0F0F0),
+                                                borderRadius: BorderRadius.circular(8),
+                                              ),
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Text(
+                                                    _time,
+                                                    style: TextStyle(
+                                                      fontSize: 11,
+                                                      fontWeight: FontWeight.w600,
+                                                      color: _reminder
+                                                          ? PantryColors.green
+                                                          : PantryColors.muted,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 4),
+                                                  Icon(
+                                                    Icons.schedule_rounded,
+                                                    size: 14,
+                                                    color: _reminder
+                                                        ? PantryColors.green
+                                                        : PantryColors.muted,
+                                                  ),
+                                                ],
+                                              ),
                                             ),
-                                            style: const TextStyle(
-                                              fontSize: 11,
-                                              fontWeight: FontWeight.w600,
-                                              color: PantryColors.green,
-                                            ),
-                                            items:
-                                                const [
-                                                      '08:00 AM',
-                                                      '09:00 AM',
-                                                      '06:00 PM',
-                                                    ]
-                                                    .map(
-                                                      (time) =>
-                                                          DropdownMenuItem(
-                                                            value: time,
-                                                            child: Text(time),
-                                                          ),
-                                                    )
-                                                    .toList(),
-                                            onChanged: _reminder
-                                                ? (value) => setState(
-                                                    () => _time = value!,
-                                                  )
-                                                : null,
                                           ),
                                         ],
                                       ),
