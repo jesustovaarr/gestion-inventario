@@ -1,4 +1,5 @@
 import 'package:sqflite/sqflite.dart';
+
 import '../../models/tienda_model.dart';
 import '../inventario_db.dart';
 
@@ -19,7 +20,7 @@ class TiendaDao {
         t.ubicacion,
         t.tipo_tienda_id,
         tt.nombre AS tipo_tienda_nombre,
-        COUNT(hc.id) AS total_compras
+        COUNT(DISTINCT COALESCE('compra_' || hc.compra_id, 'articulo_' || hc.id)) AS total_compras
       FROM Tienda t
       LEFT JOIN Tipo_Tienda tt ON t.tipo_tienda_id = tt.id
       LEFT JOIN Historial_Compras hc ON t.id = hc.tienda_id
@@ -31,20 +32,23 @@ class TiendaDao {
 
   Future<Tienda?> obtenerPorId(int id) async {
     final db = await _db;
-    final res = await db.rawQuery('''
+    final res = await db.rawQuery(
+      '''
       SELECT 
         t.id,
         t.nombre,
         t.ubicacion,
         t.tipo_tienda_id,
         tt.nombre AS tipo_tienda_nombre,
-        COUNT(hc.id) AS total_compras
+        COUNT(DISTINCT COALESCE('compra_' || hc.compra_id, 'articulo_' || hc.id)) AS total_compras
       FROM Tienda t
       LEFT JOIN Tipo_Tienda tt ON t.tipo_tienda_id = tt.id
       LEFT JOIN Historial_Compras hc ON t.id = hc.tienda_id
       WHERE t.id = ?
       GROUP BY t.id;
-    ''', [id]);
+    ''',
+      [id],
+    );
     if (res.isEmpty) return null;
     return Tienda.fromMap(res.first);
   }
@@ -79,8 +83,18 @@ class TiendaDao {
   Future<int> eliminar(int idTienda) async {
     final db = await _db;
     return await db.transaction<int>((txn) async {
-      await txn.delete('Historial_Compras', where: 'tienda_id = ?', whereArgs: [idTienda]);
-      await txn.update('Producto', {'ultima_tienda_id': null}, where: 'ultima_tienda_id = ?', whereArgs: [idTienda]);
+      await txn.delete(
+        'Historial_Compras',
+        where: 'tienda_id = ?',
+        whereArgs: [idTienda],
+      );
+      await txn.delete('Compra', where: 'tienda_id = ?', whereArgs: [idTienda]);
+      await txn.update(
+        'Producto',
+        {'ultima_tienda_id': null},
+        where: 'ultima_tienda_id = ?',
+        whereArgs: [idTienda],
+      );
       return await txn.delete('Tienda', where: 'id = ?', whereArgs: [idTienda]);
     });
   }
