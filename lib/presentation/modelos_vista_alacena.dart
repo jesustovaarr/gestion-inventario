@@ -95,6 +95,62 @@ class PantryProductPreview {
   final double lotQuantity;
   final double? totalStock;
   final List<Lote> activeLots;
+  bool matchesStatus(PantryPreviewStatus filter) => switch (filter) {
+    PantryPreviewStatus.expired =>
+      status == filter ||
+          activeLots.any((lot) => lot.cantidad > 0 && lot.estaCaducado),
+    PantryPreviewStatus.expiring =>
+      status == filter ||
+          activeLots.any((lot) => lot.cantidad > 0 && lot.porCaducar),
+    _ => status == filter,
+  };
+
+  /// Al filtrar por caducidad, muestra el lote correspondiente en la tarjeta.
+  PantryProductPreview forStatus(PantryPreviewStatus? filter) {
+    if (filter != PantryPreviewStatus.expired &&
+        filter != PantryPreviewStatus.expiring) {
+      return this;
+    }
+    final matchingLots =
+        activeLots
+            .where(
+              (lot) =>
+                  lot.cantidad > 0 &&
+                  (filter == PantryPreviewStatus.expired
+                      ? lot.estaCaducado
+                      : lot.porCaducar),
+            )
+            .toList()
+          ..sort((a, b) {
+            final date = a.fechaCaducidad.compareTo(b.fechaCaducidad);
+            return date != 0 ? date : (a.id ?? 0).compareTo(b.id ?? 0);
+          });
+    if (matchingLots.isEmpty) return this;
+    final lot = matchingLots.first;
+    return PantryProductPreview(
+      id: id,
+      name: name,
+      category: category,
+      status: filter!,
+      note: note,
+      quantity: quantity,
+      thumbnail: thumbnail,
+      imagePath: imagePath,
+      unit: unit,
+      minimumStock: minimumStock,
+      price: price,
+      code: code,
+      packaging: packaging,
+      packageContent: packageContent,
+      storageZone: storageZone,
+      expiryDate: lot.fechaCaducidad,
+      lotId: lot.id,
+      lotQuantity: lot.cantidad,
+      totalStock: totalStock,
+      activeLots: activeLots,
+    );
+  }
+
   String get key => (id ?? name).toString();
   String get presentationLabel =>
       etiquetaPresentacion(packaging, packageContent, unit);

@@ -200,7 +200,7 @@ void main() {
 
       expect(find.text('Yogurt Griego'), findsOneWidget);
       expect(find.text('2 pza'), findsOneWidget);
-      expect(find.text('Por caducar'), findsOneWidget);
+      expect(find.text('Por caducar'), findsNothing);
       expect(find.text('Caducidad: 15 de octubre de 2026'), findsOneWidget);
       expect(find.text('Consumir'), findsNothing);
       expect(find.text('Desechar'), findsNothing);

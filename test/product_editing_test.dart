@@ -463,6 +463,73 @@ void main() {
       await inventario.close();
     },
   );
+  for (final packaging in ['botella', 'bolsa', 'granel']) {
+    testWidgets('El mínimo se captura por $packaging y conserva las alertas', (
+      tester,
+    ) async {
+      final db = EditingDatabase();
+      db.tables['Producto']!.single.addAll({
+        'presentacion': packaging,
+        'contenido_envase': 0.5,
+        'stock_minimo': 1.0,
+      });
+      final inventario = InventarioDB.conDatabase(db, verificarEsquema: true);
+      await inventario.database;
+      final product = (await ProductoDao(db).obtenerPorId(1))!.toPreview();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ProductFormScreen(product: product, catalogOnly: true),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final minimum = find.byKey(const ValueKey('quantity-stock mínimo'));
+      await tester.scrollUntilVisible(
+        minimum,
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await Scrollable.ensureVisible(tester.element(minimum), alignment: 0.3);
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<TextField>(minimum).controller!.text,
+        packaging == 'granel' ? '1' : '2',
+      );
+      expect(
+        find.textContaining(
+          packaging == 'granel'
+              ? 'para productos a granel'
+              : 'Expresado en ${packaging == 'botella' ? 'botellas' : 'bolsas'} de 500 ml',
+        ),
+        findsOneWidget,
+      );
+      await tester.enterText(minimum, '3');
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('Guardar cambios'),
+        250,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.tap(find.text('Guardar cambios'));
+      await tester.pumpAndSettle();
+      final saved = (await ProductoDao(db).obtenerPorId(1))!;
+      expect(saved.stockMinimo, packaging == 'granel' ? 3 : 1.5);
+      expect(
+        saved.estado,
+        packaging == 'granel'
+            ? EstadoProducto.porAgotarse
+            : EstadoProducto.enOrden,
+      );
+      db.tables['Lote']!.single['cantidad'] = 1.0;
+      expect(
+        (await ProductoDao(db).obtenerPorId(1))!.estado,
+        EstadoProducto.porAgotarse,
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await inventario.close();
+    });
+  }
   testWidgets(
     'El editor de movimientos entrega solo las propiedades del registro',
     (tester) async {

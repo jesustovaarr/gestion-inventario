@@ -26,7 +26,6 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
 
   late List<CalendarAlertPreview> _alertas;
   bool? _clearView;
-  CalendarPreviewStatus? _status;
 
   @override
   void initState() {
@@ -121,9 +120,7 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
                       a.name,
                       style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
-                    subtitle: Text(
-                      '${a.lotCode} · ${a.quantity} · ${a.status.label}',
-                    ),
+                    subtitle: Text('${a.lotCode} · ${a.quantity}'),
                     trailing: const Icon(Icons.chevron_right, size: 20),
                     onTap: () {
                       Navigator.of(ctx).pop();
@@ -222,31 +219,11 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
     final withoutAlerts = alerts
         .where((a) => a.status == CalendarPreviewStatus.healthy)
         .toList();
-    final visible =
-        (_clearView == true
-                ? withoutAlerts
-                : _clearView == false
-                ? withAlerts
-                : alerts)
-            .where((a) {
-              if (_status == null) return true;
-              if (_status == CalendarPreviewStatus.lowStock) {
-                return a.status == CalendarPreviewStatus.lowStock ||
-                    a.porAgotarse;
-              }
-              return a.status == _status;
-            })
-            .toList();
-
-    int contarAlertasPorEstado(CalendarPreviewStatus status) {
-      return withAlerts
-          .where(
-            (alert) =>
-                alert.status == status ||
-                (status == CalendarPreviewStatus.lowStock && alert.porAgotarse),
-          )
-          .length;
-    }
+    final visible = _clearView == true
+        ? withoutAlerts
+        : _clearView == false
+        ? withAlerts
+        : alerts;
     const weekdays = [
       'Lunes',
       'Martes',
@@ -322,10 +299,10 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
                                   '${widget.day.year.toString().padLeft(4, '0')}-${widget.day.month.toString().padLeft(2, '0')}-${widget.day.day.toString().padLeft(2, '0')}';
                               await ServicioNotificaciones()
                                   .lanzarNotificacionPrueba(
-                                nombreProducto: primerProducto,
-                                fechaIso: iso,
-                                segundos: 1,
-                              );
+                                    nombreProducto: primerProducto,
+                                    fechaIso: iso,
+                                    segundos: 1,
+                                  );
                               if (context.mounted) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(
@@ -351,8 +328,9 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
                           IconButton(
                             key: const Key('btn_configurar_alerta_dia'),
                             onPressed: () {
-                              final lista =
-                                  visible.isNotEmpty ? visible : _alertas;
+                              final lista = visible.isNotEmpty
+                                  ? visible
+                                  : _alertas;
                               if (lista.isEmpty) return;
                               if (lista.length == 1) {
                                 _abrirConfiguracionAlerta(lista.first);
@@ -365,10 +343,7 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
                               backgroundColor: PantryColors.orangeLight,
                               foregroundColor: PantryColors.orange,
                             ),
-                            icon: const Icon(
-                              Icons.alarm_rounded,
-                              size: 20,
-                            ),
+                            icon: const Icon(Icons.alarm_rounded, size: 20),
                           ),
                           const SizedBox(width: 6),
                           IconButton(
@@ -409,7 +384,6 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
                                   _clearView = _clearView == false
                                       ? null
                                       : false;
-                                  _status = null;
                                 }),
                               ),
                             ),
@@ -420,7 +394,6 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
                                 selected: _clearView == true,
                                 onTap: () => setState(() {
                                   _clearView = _clearView == true ? null : true;
-                                  _status = null;
                                 }),
                               ),
                             ),
@@ -429,52 +402,7 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
                       ),
                     ),
                   ),
-                  if (_clearView != true)
-                    SliverPadding(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      sliver: SliverToBoxAdapter(
-                        child: SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          padding: const EdgeInsets.symmetric(horizontal: 20),
-                          child: Row(
-                            children: [
-                              for (final status
-                                  in CalendarPreviewStatus.values.where(
-                                    (s) => s != CalendarPreviewStatus.healthy,
-                                  ))
-                                Padding(
-                                  padding: const EdgeInsets.only(left: 6),
-                                  child: ChoiceChip(
-                                    label: Text(
-                                      '${status.label} (${contarAlertasPorEstado(status)})',
-                                    ),
-                                    avatar: Icon(
-                                      Icons.circle,
-                                      size: 6,
-                                      color: status.color,
-                                    ),
-                                    selected: _status == status,
-                                    showCheckmark: false,
-                                    onSelected: (_) => setState(() {
-                                      _status = _status == status
-                                          ? null
-                                          : status;
-                                      _clearView = null;
-                                    }),
-                                    labelStyle: TextStyle(
-                                      fontSize: 10,
-                                      color: status.color,
-                                    ),
-                                    backgroundColor: Colors.white,
-                                    selectedColor: status.background,
-                                    side: BorderSide.none,
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
+                  const SliverToBoxAdapter(child: SizedBox(height: 14)),
                   if (visible.isEmpty)
                     SliverPadding(
                       padding: const EdgeInsets.fromLTRB(20, 28, 20, 36),
@@ -504,182 +432,153 @@ class _DayAlertsScreenState extends State<DayAlertsScreen> {
                       ),
                     )
                   else
-                      SliverPadding(
-                        padding: const EdgeInsets.symmetric(horizontal: 20),
-                        sliver: SliverList.builder(
-                          itemCount: visible.length,
-                          itemBuilder: (_, index) => _DayProductCard(
-                            alert: visible[index],
-                            day: widget.day,
-                            onConfigurarAlerta: _abrirConfiguracionAlerta,
-                          ),
+                    SliverPadding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      sliver: SliverList.builder(
+                        itemCount: visible.length,
+                        itemBuilder: (_, index) => _DayProductCard(
+                          alert: visible[index],
+                          day: widget.day,
+                          onConfigurarAlerta: _abrirConfiguracionAlerta,
                         ),
                       ),
-                  ],
-                ),
+                    ),
+                ],
               ),
-              bottomNavigationBar: const AppBottomNavigation(selectedIndex: 1),
             ),
+            bottomNavigationBar: const AppBottomNavigation(selectedIndex: 1),
           ),
         ),
-      );
-    }
-  }
-
-  class _DayProductCard extends StatelessWidget {
-    const _DayProductCard({
-      required this.alert,
-      required this.day,
-      this.onConfigurarAlerta,
-    });
-    final CalendarAlertPreview alert;
-    final DateTime day;
-    final ValueChanged<CalendarAlertPreview>? onConfigurarAlerta;
-
-    @override
-    Widget build(BuildContext context) => Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: PantryColors.border),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              ProductThumbnail(
-                kind: alert.thumbnail,
-                imagePath: alert.imagePath,
-                size: 54,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            alert.name,
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w700,
-                            ),
+    );
+  }
+}
+
+class _DayProductCard extends StatelessWidget {
+  const _DayProductCard({
+    required this.alert,
+    required this.day,
+    this.onConfigurarAlerta,
+  });
+  final CalendarAlertPreview alert;
+  final DateTime day;
+  final ValueChanged<CalendarAlertPreview>? onConfigurarAlerta;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    margin: const EdgeInsets.only(bottom: 12),
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: PantryColors.border),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ProductThumbnail(
+              kind: alert.thumbnail,
+              imagePath: alert.imagePath,
+              size: 54,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          alert.name,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
-                        IconButton(
-                          key: Key('btn_config_alerta_${alert.loteId}'),
-                          icon: Icon(
-                            alert.alarmaActiva == 1
-                                ? Icons.notifications_active_rounded
-                                : Icons.notifications_off_outlined,
-                            size: 20,
-                            color: alert.alarmaActiva == 1
-                                ? PantryColors.orange
-                                : PantryColors.muted,
-                          ),
-                          tooltip: 'Configurar recordatorio o alarma',
-                          visualDensity: VisualDensity.compact,
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
-                          onPressed: () => onConfigurarAlerta?.call(alert),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      alert.location,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: PantryColors.muted,
                       ),
-                    ),
-                    const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 4,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: alert.status.background,
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                alert.status.icon,
-                                size: 13,
-                                color: alert.status.color,
-                              ),
-                              const SizedBox(width: 5),
-                              Text(
-                                alert.status.label,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: alert.status.color,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
+                      IconButton(
+                        key: Key('btn_config_alerta_${alert.loteId}'),
+                        icon: Icon(
+                          alert.alarmaActiva == 1
+                              ? Icons.notifications_active_rounded
+                              : Icons.notifications_off_outlined,
+                          size: 20,
+                          color: alert.alarmaActiva == 1
+                              ? PantryColors.orange
+                              : PantryColors.muted,
                         ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: alert.alarmaActiva == 1
-                                ? PantryColors.orangeLight
-                                : PantryColors.background,
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                alert.alarmaActiva == 1
-                                    ? Icons.access_time_rounded
-                                    : Icons.alarm_off_outlined,
-                                size: 13,
+                        tooltip: 'Configurar recordatorio o alarma',
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                        onPressed: () => onConfigurarAlerta?.call(alert),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    alert.location,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: PantryColors.muted,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: alert.alarmaActiva == 1
+                              ? PantryColors.orangeLight
+                              : PantryColors.background,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              alert.alarmaActiva == 1
+                                  ? Icons.access_time_rounded
+                                  : Icons.alarm_off_outlined,
+                              size: 13,
+                              color: alert.alarmaActiva == 1
+                                  ? PantryColors.orange
+                                  : PantryColors.muted,
+                            ),
+                            const SizedBox(width: 5),
+                            Text(
+                              alert.alarmaActiva == 1
+                                  ? 'Aviso: ${alert.horaAviso}'
+                                  : 'Sin alarma',
+                              style: TextStyle(
+                                fontSize: 11,
                                 color: alert.alarmaActiva == 1
                                     ? PantryColors.orange
                                     : PantryColors.muted,
+                                fontWeight: FontWeight.w600,
                               ),
-                              const SizedBox(width: 5),
-                              Text(
-                                alert.alarmaActiva == 1
-                                    ? 'Aviso: ${alert.horaAviso}'
-                                    : 'Sin alarma',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: alert.alarmaActiva == 1
-                                      ? PantryColors.orange
-                                      : PantryColors.muted,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                  ],
-                ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+          ],
+        ),
         const SizedBox(height: 12),
         Row(
           children: [

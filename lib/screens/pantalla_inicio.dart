@@ -26,7 +26,6 @@ class HomeScreen extends StatefulWidget {
     this.onAddToCart,
     this.onInventoryAction,
     this.cartCount = 0,
-    this.onEditProduct,
     this.onDeleteProduct,
     this.sections = const [],
   });
@@ -40,7 +39,6 @@ class HomeScreen extends StatefulWidget {
   final ValueChanged<PantryProductPreview>? onAddToCart;
   final ValueChanged<PantryProductPreview>? onInventoryAction;
   final num cartCount;
-  final ValueChanged<PantryProductPreview>? onEditProduct;
   final ValueChanged<PantryProductPreview>? onDeleteProduct;
   final List<PantrySectionPreview>? sections;
 
@@ -76,11 +74,13 @@ class _HomeScreenState extends State<HomeScreen> {
             p.category.toLowerCase().contains(_filtroTexto.toLowerCase());
         if (!matchSearch) continue;
 
-        if (p.status == PantryPreviewStatus.expired) {
+        if (p.matchesStatus(PantryPreviewStatus.expired)) {
           caducadosCount++;
-        } else if (p.status == PantryPreviewStatus.expiring) {
+        }
+        if (p.matchesStatus(PantryPreviewStatus.expiring)) {
           porCaducarCount++;
-        } else if (p.status == PantryPreviewStatus.lowStock) {
+        }
+        if (p.matchesStatus(PantryPreviewStatus.lowStock)) {
           porAgotarseCount++;
         }
       }
@@ -94,7 +94,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final List<PantrySectionPreview> seccionesMostradas = allSections
         .map((s) {
           final productosFiltrados = s.products.where((p) {
-            if (_filtroEstado != null && p.status != _filtroEstado) {
+            if (_filtroEstado != null && !p.matchesStatus(_filtroEstado!)) {
               return false;
             }
             if (_filtroTexto.isEmpty) return true;
@@ -271,20 +271,22 @@ class _HomeScreenState extends State<HomeScreen> {
                             context,
                             index,
                           ) {
-                            final product = section.products[index];
+                            final originalProduct = section.products[index];
+                            final product = originalProduct.forStatus(
+                              _filtroEstado,
+                            );
                             return Padding(
                               padding: const EdgeInsets.only(bottom: 8),
                               child: CatalogSwipeActions(
                                 key: ValueKey('product-swipe-${product.key}'),
                                 name: product.name,
-                                onEdit: () =>
-                                    (widget.onEditProduct ?? widget.onProductTap)?.call(product),
                                 onDelete: () =>
                                     widget.onDeleteProduct?.call(product),
                                 child: ProductCard(
                                   product: product,
                                   onInventoryAction:
-                                      widget.onInventoryAction == null
+                                      widget.onInventoryAction == null ||
+                                          product.lotId != originalProduct.lotId
                                       ? null
                                       : () =>
                                             widget.onInventoryAction!(product),

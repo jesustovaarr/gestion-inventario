@@ -91,25 +91,38 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   void initState() {
     super.initState();
     _name = widget.draft?.name ?? widget.product?.name ?? '';
-    _imagen = widget.initialImagePath ?? widget.draft?.imagePath ?? widget.product?.imagePath;
+    _imagen =
+        widget.initialImagePath ??
+        widget.draft?.imagePath ??
+        widget.product?.imagePath;
     _cargando = widget.isEditing && widget.product?.id != null;
     _zone = widget.draft?.zone ?? widget.product?.storageZone ?? 'Nevera';
     _category = widget.draft?.category ?? widget.product?.category ?? 'Lácteos';
-    _unit = widget.draft?.unit ??
+    _unit =
+        widget.draft?.unit ??
         (widget.product != null
             ? (widget.product!.unit.toLowerCase() == 'lt'
-                ? 'L'
-                : widget.product!.unit)
+                  ? 'L'
+                  : widget.product!.unit)
             : 'pza');
-    _minimum = widget.draft?.minimum ?? widget.product?.minimumStock.toDouble() ?? 2.0;
     _quantity = widget.draft?.quantity ?? 1.0;
     _fechaCaducidad = widget.draft?.fechaCaducidad ?? _fechaCaducidad;
     _packaging = widget.draft?.packaging != null
         ? PresentacionCompra.leer(widget.draft!.packaging!)
         : (widget.product?.packaging ?? PresentacionCompra.pieza);
-    _codeController = TextEditingController(text: widget.draft?.code ?? widget.product?.code ?? '');
+    _minimum =
+        widget.draft?.minimum ??
+        (widget.product == null
+            ? 2.0
+            : widget.product!.minimumStock /
+                  (_packaging.esEnvase ? widget.product!.packageContent : 1));
+    _codeController = TextEditingController(
+      text: widget.draft?.code ?? widget.product?.code ?? '',
+    );
     _contentController = TextEditingController(
-      text: formatearCantidad(widget.draft?.packageContent ?? widget.product?.packageContent ?? 1),
+      text: formatearCantidad(
+        widget.draft?.packageContent ?? widget.product?.packageContent ?? 1,
+      ),
     );
 
     _nameController = TextEditingController(text: _name);
@@ -271,10 +284,13 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
           _category = producto.categoriaNombre ?? _category;
           _unit = producto.unidadMedida == 'lt' ? 'L' : producto.unidadMedida;
           _zone = producto.zonaAlmacenamiento ?? _zone;
-          if (widget.initialImagePath == null && widget.draft?.imagePath == null) {
+          if (widget.initialImagePath == null &&
+              widget.draft?.imagePath == null) {
             _imagen = producto.imagen.isEmpty ? null : producto.imagen;
           }
-          _minimum = producto.stockMinimo;
+          _minimum =
+              producto.stockMinimo /
+              (_packaging.esEnvase ? producto.contenidoEnvase : 1);
           _minimumController.text = formatearCantidad(_minimum);
           _ultimaTiendaId = producto.ultimaTiendaId;
         }
@@ -339,10 +355,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     if (!_reminder) return;
     final (hour, minute) = ServicioNotificaciones.parsearHora(_time);
     final inicial = TimeOfDay(hour: hour, minute: minute);
-    final hora = await showTimePicker(
-      context: context,
-      initialTime: inicial,
-    );
+    final hora = await showTimePicker(context: context, initialTime: inicial);
     if (hora == null || !mounted) return;
     final h = hora.hourOfPeriod == 0 ? 12 : hora.hourOfPeriod;
     final m = hora.minute.toString().padLeft(2, '0');
@@ -422,7 +435,13 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       );
       return;
     }
-    final parsedMin = leerCantidad(_minimumController.text);
+    final minimoCapturado = leerCantidad(_minimumController.text);
+    // SQLite y las alertas usan unidades base; el formulario usa presentaciones.
+    final parsedMin = minimoCapturado == null
+        ? null
+        : normalizarCantidad(
+            minimoCapturado * (_packaging.esEnvase ? content! : 1),
+          );
     final cantidadCapturada = leerCantidad(
       _quantityController.text,
       permiteCero: true,
@@ -433,6 +452,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
             cantidadCapturada * (_packaging.esEnvase ? content ?? 1 : 1),
           );
     if (parsedMin == null ||
+        !cantidadValida(parsedMin) ||
         (!widget.isEditing &&
             !widget.catalogOnly &&
             (parsedQty == null ||
@@ -742,7 +762,8 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                         CampoCodigoBarras(
                           controller: _codeController,
                           isEditing: widget.isEditing,
-                          currentProductId: widget.product?.id ?? widget.draft?.productId,
+                          currentProductId:
+                              widget.product?.id ?? widget.draft?.productId,
                           onProductResolved: _aplicarDatosCodigoBarras,
                         ),
                         const SizedBox(height: 18),
@@ -862,11 +883,15 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                           onIncrease: _incrementarMinimo,
                           onChanged: (val) => setState(() => _minimum = val),
                           label: 'stock mínimo',
-                          unit: unidadVisible(_unit),
+                          unit: _packaging.esEnvase
+                              ? _packaging.plural
+                              : unidadVisible(_unit),
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          'Expresado en ${unidadVisible(_unit)}, igual que las existencias.',
+                          _packaging.esEnvase
+                              ? 'Expresado en ${_packaging.plural} de ${formatearContenido(leerCantidad(_contentController.text) ?? 1, _unit)}.'
+                              : 'Expresado en ${unidadVisible(_unit)} para productos a granel.',
                           style: const TextStyle(
                             fontSize: 11,
                             color: PantryColors.muted,
@@ -1043,12 +1068,11 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                                             onChanged: (value) {
                                               if (value) {
                                                 final error =
-                                                    ServicioNotificaciones
-                                                        .validarMomentoAlarma(
-                                                          fechaCaducidad:
-                                                              _fechaCaducidad,
-                                                          horaAviso: _time,
-                                                        );
+                                                    ServicioNotificaciones.validarMomentoAlarma(
+                                                      fechaCaducidad:
+                                                          _fechaCaducidad,
+                                                      horaAviso: _time,
+                                                    );
                                                 if (error != null) {
                                                   ScaffoldMessenger.of(
                                                     context,
@@ -1065,9 +1089,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                                                   return;
                                                 }
                                               }
-                                              setState(
-                                                () => _reminder = value,
-                                              );
+                                              setState(() => _reminder = value);
                                             },
                                           ),
                                         ],
@@ -1092,18 +1114,24 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                                           ),
                                           InkWell(
                                             key: const Key('btn_hora_aviso'),
-                                            onTap: _reminder ? _seleccionarHoraAviso : null,
-                                            borderRadius: BorderRadius.circular(8),
+                                            onTap: _reminder
+                                                ? _seleccionarHoraAviso
+                                                : null,
+                                            borderRadius: BorderRadius.circular(
+                                              8,
+                                            ),
                                             child: Container(
-                                              padding: const EdgeInsets.symmetric(
-                                                horizontal: 10,
-                                                vertical: 6,
-                                              ),
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 10,
+                                                    vertical: 6,
+                                                  ),
                                               decoration: BoxDecoration(
                                                 color: _reminder
                                                     ? PantryColors.greenLight
                                                     : const Color(0xFFF0F0F0),
-                                                borderRadius: BorderRadius.circular(8),
+                                                borderRadius:
+                                                    BorderRadius.circular(8),
                                               ),
                                               child: Row(
                                                 mainAxisSize: MainAxisSize.min,
@@ -1112,7 +1140,8 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                                                     _time,
                                                     style: TextStyle(
                                                       fontSize: 11,
-                                                      fontWeight: FontWeight.w600,
+                                                      fontWeight:
+                                                          FontWeight.w600,
                                                       color: _reminder
                                                           ? PantryColors.green
                                                           : PantryColors.muted,

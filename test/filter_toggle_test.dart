@@ -113,19 +113,10 @@ void main() {
       expect(find.text('Producto vencido'), findsOneWidget);
       expect(find.text('Producto próximo'), findsOneWidget);
       expect(find.text('Producto sin alerta'), findsOneWidget);
-      await tester.tap(find.text('Caducado (1)'));
-      await tester.pumpAndSettle();
-      expect(find.text('Producto vencido'), findsOneWidget);
-      expect(find.text('Producto próximo'), findsNothing);
-      expect(find.text('Producto sin alerta'), findsNothing);
-      await tester.tap(find.text('Caducado (1)'));
-      await tester.pumpAndSettle();
-      expect(find.text('Producto próximo'), findsOneWidget);
-      expect(find.text('Producto sin alerta'), findsOneWidget);
-      await tester.tap(find.text('Por caducar (1)'));
-      await tester.pumpAndSettle();
-      expect(find.text('Producto próximo'), findsOneWidget);
-      expect(find.text('Producto vencido'), findsNothing);
+      expect(find.byType(ChoiceChip), findsNothing);
+      for (final label in ['Caducado', 'Por caducar', 'Por agotarse']) {
+        expect(find.textContaining(label), findsNothing);
+      }
       await tester.tap(find.text('Sin alerta (1)'));
       await tester.pumpAndSettle();
       expect(find.text('Producto próximo'), findsNothing);

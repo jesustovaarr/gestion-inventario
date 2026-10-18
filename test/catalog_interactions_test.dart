@@ -73,7 +73,7 @@ void main() {
     await inventory.close();
   });
 
-  testWidgets('Inicio permite editar al tocar o deslizar, y confirma antes de borrar', (
+  testWidgets('Inicio edita al tocar y solo muestra Borrar al deslizar', (
     tester,
   ) async {
     final db = PurchaseDatabase();
@@ -99,15 +99,8 @@ void main() {
     await tester.ensureVisible(card);
     await tester.drag(card, const Offset(-350, 0));
     await tester.pumpAndSettle();
-    expect(find.text('Editar'), findsOneWidget);
-    await tester.tap(find.text('Editar'));
-    await tester.pumpAndSettle();
-    expect(find.byType(ProductFormScreen), findsOneWidget);
-    await tester.pageBack();
-    await tester.pumpAndSettle();
-
-    await tester.drag(card, const Offset(-350, 0));
-    await tester.pumpAndSettle();
+    expect(find.text('Editar'), findsNothing);
+    expect(find.byTooltip('Editar Leche'), findsNothing);
     await tester.tap(find.byTooltip('Borrar Leche'));
     await tester.pumpAndSettle();
     expect(find.text('Eliminar del inventario'), findsOneWidget);

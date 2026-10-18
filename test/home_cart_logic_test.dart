@@ -6,6 +6,7 @@ import 'package:gestion_inventario/database/daos/producto_dao.dart';
 import 'package:gestion_inventario/database/inventario_db.dart';
 import 'package:gestion_inventario/models/compra_model.dart';
 import 'package:gestion_inventario/models/producto_model.dart';
+import 'package:gestion_inventario/models/lote_model.dart';
 import 'package:gestion_inventario/presentation/acciones_inventario.dart';
 import 'package:gestion_inventario/presentation/controlador_carrito.dart';
 import 'package:gestion_inventario/presentation/modelos_vista_alacena.dart';
@@ -156,6 +157,87 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Poco arroz'), findsOneWidget);
       expect(find.text('Vacío'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+  testWidgets(
+    'Por caducar muestra el siguiente lote sin perder la prioridad del caducado',
+    (tester) async {
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      String iso(int days) =>
+          today.add(Duration(days: days)).toIso8601String().substring(0, 10);
+      final product =
+          Producto.fromMap({
+                'id': 1,
+                'nombre': 'Leche',
+                'stock_actual': 2.0,
+                'stock_minimo': 0.5,
+                'tiene_caducado': 1,
+                'tiene_por_caducar': 1,
+                'proxima_caducidad': iso(-1),
+                'primer_lote_id': 10,
+                'cantidad_primer_lote': 1.0,
+              })
+              .copyWith(
+                lotesActivos: [
+                  Lote(
+                    id: 10,
+                    productoId: 1,
+                    cantidad: 1,
+                    fechaCaducidad: iso(-1),
+                  ),
+                  Lote(
+                    id: 11,
+                    productoId: 1,
+                    cantidad: 1,
+                    fechaCaducidad: iso(1),
+                  ),
+                  Lote(
+                    id: 12,
+                    productoId: 1,
+                    cantidad: 0,
+                    fechaCaducidad: iso(0),
+                  ),
+                ],
+              )
+              .toPreview();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: HomeScreen(
+            onInventoryAction: (_) {},
+            sections: [
+              PantrySectionPreview(
+                title: 'Productos',
+                caption: '',
+                status: PantryPreviewStatus.healthy,
+                products: [product],
+              ),
+            ],
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      ProductCard card() =>
+          tester.widget<ProductCard>(find.byType(ProductCard));
+      expect(card().product.lotId, 10);
+      expect(card().product.status, PantryPreviewStatus.expired);
+      expect(card().onInventoryAction, isNotNull);
+      await tester.tap(find.text('Por caducar').first);
+      await tester.pumpAndSettle();
+      expect(card().product.lotId, 11);
+      expect(card().product.status, PantryPreviewStatus.expiring);
+      expect(card().product.expiryDate, iso(1));
+      expect(find.text('Caduca mañana'), findsOneWidget);
+      expect(card().product.availableQuantity, 2);
+      expect(card().onInventoryAction, isNull);
+      await tester.tap(find.text('Caducados').first);
+      await tester.pumpAndSettle();
+      expect(card().product.lotId, 10);
+      expect(card().onInventoryAction, isNotNull);
+      await tester.tap(find.text('Caducados').first);
+      await tester.pumpAndSettle();
+      expect(card().product.lotId, 10);
       expect(tester.takeException(), isNull);
     },
   );
