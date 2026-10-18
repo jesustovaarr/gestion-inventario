@@ -1,13 +1,32 @@
 import 'package:flutter/material.dart';
 
 import 'modelos_vista_alacena.dart';
+import 'modelos_vista_compra.dart';
 import '../database/daos/carrito_dao.dart';
-import '../widgets/miniatura_producto.dart';
+import '../database/daos/producto_dao.dart';
+import '../models/carrito_model.dart';
+import '../utils/cantidades.dart';
 
-class ShoppingListItemPreview {
-  const ShoppingListItemPreview(this.product, this.quantity);
-  final PantryProductPreview product;
-  final int quantity;
+class ShoppingListItemPreview extends PurchaseArticleDraft {
+  const ShoppingListItemPreview(
+    PantryProductPreview product,
+    double quantity, {
+    super.priceCents,
+    super.expiryDate,
+    super.packaging,
+    super.packageCount,
+    super.packageContent,
+  }) : super(product: product, quantity: quantity);
+  factory ShoppingListItemPreview.fromDraft(PurchaseArticleDraft item) =>
+      ShoppingListItemPreview(
+        item.product,
+        item.quantity,
+        priceCents: item.priceCents,
+        expiryDate: item.expiryDate,
+        packaging: item.packaging,
+        packageCount: item.packageCount,
+        packageContent: item.packageContent,
+      );
 }
 
 class ShoppingListPreview {
@@ -19,148 +38,145 @@ class ShoppingListPreview {
   final int id;
   final String name;
   final List<ShoppingListItemPreview> items;
-  int get units => items.fold(0, (sum, item) => sum + item.quantity);
-
+  double get units => items.fold(
+    0.0,
+    (sum, item) => sum + (item.packaging.esEnvase ? item.packageCount : 1),
+  );
   ShoppingListPreview copyWith({
     String? name,
     List<ShoppingListItemPreview>? items,
-  }) =>
-      ShoppingListPreview(
-        id: id,
-        name: name ?? this.name,
-        items: items ?? this.items,
-      );
+  }) => ShoppingListPreview(
+    id: id,
+    name: name ?? this.name,
+    items: items ?? this.items,
+  );
 }
 
-/// Controlador de la lista de compras sincronizado con SQLite CarritoDao
 class ShoppingListsPreviewController extends ChangeNotifier {
   final CarritoDao _carritoDao = CarritoDao();
-
   ShoppingListsPreviewController() {
-    _current = ShoppingListPreview(
-      id: 1,
-      name: 'Mi lista',
-      items: [],
-    );
     cargarDesdeBD();
   }
-
-  late ShoppingListPreview _current;
+  ShoppingListPreview _current = ShoppingListPreview(
+    id: 1,
+    name: 'Mi lista',
+    items: [],
+  );
   ShoppingListPreview get current => _current;
+  bool _disposed = false;
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
 
-  void _replace(ShoppingListPreview list) {
-    _current = list;
+  void _replace(List<ShoppingListItemPreview> items) {
+    items.sort((a, b) => a.product.name.compareTo(b.product.name));
+    _current = current.copyWith(items: items);
+    if (!_disposed) notifyListeners();
   }
 
   Future<void> cargarDesdeBD() async {
     try {
-      final itemsBD = await _carritoDao.obtenerItems();
-      final previewItems = itemsBD.map((item) {
-        return ShoppingListItemPreview(
-          PantryProductPreview(
-            id: item.productoId,
-            name: item.productoNombre ?? 'Artículo',
-            category: 'Inventario',
-            status: (item.stockActual ?? 0) <= 0
-                ? PantryPreviewStatus.expired
-                : PantryPreviewStatus.healthy,
-            note:
-                'Stock: ${(item.stockActual ?? 0).toInt()} ${item.unidadMedida ?? "pza"}',
-            quantity:
-                '${(item.stockActual ?? 0).toInt()} ${item.unidadMedida ?? "pza"}',
-            unit: item.unidadMedida ?? 'pza',
-            thumbnail: ProductThumbnailKind.placeholder,
-            imagePath: item.imagen,
-          ),
-          item.cantidadAComprar.toInt() <= 0
-              ? 1
-              : item.cantidadAComprar.toInt(),
-        );
-      }).toList();
-
-      _replace(_current.copyWith(items: previewItems));
-      notifyListeners();
+      final rows = await _carritoDao.obtenerItems();
+      final products = await ProductoDao().obtenerConStock();
+      if (_disposed) return;
+      final byId = {for (final p in products) p.id: p.toPreview()};
+      _replace([
+        for (final item in rows)
+          if (byId[item.productoId] != null)
+            _stored(item, byId[item.productoId]!),
+      ]);
     } catch (_) {}
   }
 
-  void renameCurrent(String name) {
-    _replace(current.copyWith(name: name));
-    notifyListeners();
+  ShoppingListItemPreview _stored(
+    CarritoItem item,
+    PantryProductPreview product,
+  ) {
+    final reference = product.price == null
+        ? null
+        : product.price! *
+              100 *
+              (item.presentacion.esEnvase ? item.contenidoEnvase : 1);
+    return ShoppingListItemPreview(
+      product,
+      item.cantidadAComprar,
+      packaging: item.presentacion,
+      packageCount: item.numeroEnvases,
+      packageContent: item.contenidoEnvase,
+      priceCents:
+          item.precioCentavos ??
+          (reference != null &&
+                  reference.isFinite &&
+                  reference >= 0 &&
+                  reference <= 99999999
+              ? reference.round()
+              : null),
+      expiryDate: DateTime.tryParse(item.fechaCaducidad ?? ''),
+    );
   }
 
-  bool _isSameProduct(PantryProductPreview a, PantryProductPreview b) {
-    if (a.id != null && b.id != null) {
-      return a.id == b.id;
+  void _setLocal(PurchaseArticleDraft item) {
+    final next = ShoppingListItemPreview.fromDraft(item);
+    final items = current.items.toList();
+    final index = items.indexWhere((i) => i.key == item.key);
+    if (index < 0) {
+      items.add(next);
+    } else {
+      items[index] = next;
     }
-    return a.name == b.name;
+    _replace(items);
+  }
+
+  Future<void> setItem(PurchaseArticleDraft item) async {
+    if (!cantidadValida(item.quantity)) {
+      throw ArgumentError('Cantidad inválida');
+    }
+    if (item.product.id != null) {
+      await _carritoDao.guardarArticulo(item.toCartItem());
+    }
+    if (!_disposed) _setLocal(item);
   }
 
   Future<void> addProduct(PantryProductPreview product) async {
-    final items = current.items.toList();
-    final index = items.indexWhere((item) => _isSameProduct(item.product, product));
-    if (index < 0) {
-      items.add(ShoppingListItemPreview(product, 1));
-    } else {
-      items[index] = ShoppingListItemPreview(
-        product,
-        items[index].quantity + 1,
-      );
-    }
-    _replace(current.copyWith(items: items));
-    notifyListeners();
-
+    final candidate = PurchaseArticleDraft.fromProduct(product);
+    final old = current.items.where((i) => i.key == candidate.key).firstOrNull;
+    final item = old == null
+        ? candidate
+        : old.packaging.esEnvase
+        ? old.copyWith(product: product, packageCount: old.packageCount + 1)
+        : old.copyWith(
+            product: product,
+            quantity: normalizarCantidad(old.quantity + 1),
+          );
+    if (!cantidadValida(item.quantity) || item.packageCount > 999999) return;
+    _setLocal(item);
     if (product.id != null) {
       try {
-        await _carritoDao.agregarOIncrementar(product.id!);
-      } catch (_) {}
-    }
-  }
-
-  Future<void> changeQuantity(PantryProductPreview product, int delta) async {
-    final items = <ShoppingListItemPreview>[];
-    int nuevaCant = 1;
-    for (final item in current.items) {
-      final match = _isSameProduct(item.product, product);
-      if (match) {
-        nuevaCant = (item.quantity + delta).clamp(1, 999);
-        items.add(ShoppingListItemPreview(item.product, nuevaCant));
-      } else {
-        items.add(item);
-      }
-    }
-    _replace(current.copyWith(items: items));
-    notifyListeners();
-
-    if (product.id != null) {
-      try {
-        await _carritoDao.actualizarCantidad(
-          product.id!,
-          nuevaCant.toDouble(),
-        );
+        await _carritoDao.guardarArticulo(item.toCartItem());
       } catch (_) {}
     }
   }
 
   Future<void> removeProduct(PantryProductPreview product) async {
-    _replace(
-      current.copyWith(
-        items: current.items
-            .where((item) => !_isSameProduct(item.product, product))
-            .toList(),
-      ),
-    );
-    notifyListeners();
+    final item = current.items
+        .where((i) => i.key == PurchaseArticleDraft.fromProduct(product).key)
+        .firstOrNull;
+    if (item != null) await removeItem(item);
+  }
 
-    if (product.id != null) {
+  Future<void> removeItem(PurchaseArticleDraft item) async {
+    if (item.product.id != null) {
       try {
-        await _carritoDao.eliminar(product.id!);
+        await _carritoDao.eliminarArticulo(item.toCartItem());
       } catch (_) {}
     }
+    _replace(current.items.where((i) => i.key != item.key).toList());
   }
 
   Future<void> clearCurrent() async {
-    _replace(current.copyWith(items: []));
-    notifyListeners();
+    _replace([]);
     try {
       await _carritoDao.vaciar();
     } catch (_) {}
@@ -174,7 +190,6 @@ class ShoppingListsPreviewScope
     required ShoppingListsPreviewController controller,
     required super.child,
   }) : super(notifier: controller);
-
   static ShoppingListsPreviewController? maybeOf(BuildContext context) =>
       context
           .dependOnInheritedWidgetOfExactType<ShoppingListsPreviewScope>()

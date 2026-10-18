@@ -1,577 +1,579 @@
 import 'package:flutter/material.dart';
 
-import '../widgets/encabezado_seccion.dart';
-import '../widgets/barra_navegacion_inferior.dart';
 import '../components/tema_alacena.dart';
-import '../presentation/modelos_vista_alacena.dart';
-import '../widgets/miniatura_producto.dart';
-import '../models/tienda_model.dart';
-import '../models/producto_model.dart';
-import '../database/daos/tienda_dao.dart';
 import '../database/daos/compra_dao.dart';
 import '../database/daos/producto_dao.dart';
+import '../database/daos/tienda_dao.dart';
+import '../models/tienda_model.dart';
+import '../presentation/controlador_carrito.dart';
+import '../presentation/modelos_vista_alacena.dart';
+import '../presentation/modelos_vista_compra.dart';
+import '../utils/importes.dart';
+import '../utils/cantidades.dart';
+import '../widgets/barra_navegacion_inferior.dart';
+import '../widgets/editor_articulo_compra.dart';
+import '../widgets/encabezado_seccion.dart';
+import '../widgets/selector_productos_compra.dart';
+import '../widgets/tarjeta_articulo_compra.dart';
+import 'formulario_tienda.dart';
 
-/// Formulario para registrar compras
 class RegisterPurchaseScreen extends StatefulWidget {
-  const RegisterPurchaseScreen({super.key, this.product, this.productoId});
+  const RegisterPurchaseScreen({
+    super.key,
+    this.product,
+    this.productoId,
+    this.initialItems,
+    this.useShoppingList = false,
+    this.stayAfterSave = false,
+  });
   final PantryProductPreview? product;
   final int? productoId;
-
+  final List<ShoppingListItemPreview>? initialItems;
+  final bool useShoppingList;
+  final bool stayAfterSave;
   @override
   State<RegisterPurchaseScreen> createState() => _RegisterPurchaseScreenState();
 }
 
 class _RegisterPurchaseScreenState extends State<RegisterPurchaseScreen> {
-  final TiendaDao _tiendaDao = TiendaDao();
-  final CompraDao _compraDao = CompraDao();
-  final ProductoDao _productoDao = ProductoDao();
-
-  late final TextEditingController _precioController;
-  int _cantidad = 2;
-  double _precioUnitario = 28.50;
-  DateTime _fechaCompra = DateTime.now();
-  DateTime _fechaCaducidad = DateTime.now().add(const Duration(days: 22));
-
-  List<Tienda> _tiendas = [];
-  Tienda? _tiendaSeleccionada;
-  bool _cargando = true;
-  bool _guardando = false;
+  final _productoDao = ProductoDao();
+  final _tiendaDao = TiendaDao();
+  final _compraDao = CompraDao();
+  ShoppingListsPreviewController? _cart;
+  List<PantryProductPreview> _catalog = [];
+  List<Tienda> _stores = [];
+  List<PurchaseArticleDraft> _items = [];
+  int? _storeId;
+  late DateTime _purchaseDate;
+  bool _started = false;
+  bool _loading = true;
+  bool _saving = false;
+  String? _error;
+  Future<void> _draftWrites = Future.value();
+  int _pendingDraftWrites = 0;
 
   @override
   void initState() {
     super.initState();
-    _precioController = TextEditingController(text: _precioUnitario.toStringAsFixed(2));
-    _cargarDatosIniciales();
+    final now = DateTime.now();
+    _purchaseDate = DateTime(now.year, now.month, now.day);
   }
 
-  Future<void> _cargarDatosIniciales() async {
-    final tiendas = await _tiendaDao.obtenerTodas();
-    if (mounted) {
-      setState(() {
-        _tiendas = tiendas;
-        if (tiendas.isNotEmpty) {
-          _tiendaSeleccionada = tiendas.first;
-        }
-        _cargando = false;
-      });
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final cart = ShoppingListsPreviewScope.maybeOf(context);
+    if (!identical(cart, _cart)) {
+      _cart?.removeListener(_onCartChanged);
+      _cart = cart;
+      if (widget.useShoppingList) _cart?.addListener(_onCartChanged);
+    }
+    if (!_started) {
+      _started = true;
+      _load();
     }
   }
 
   @override
   void dispose() {
-    _precioController.dispose();
+    _cart?.removeListener(_onCartChanged);
     super.dispose();
   }
 
-  String _formatearFechaIso(DateTime d) =>
-      "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
-
-  String _formatearFechaLegible(DateTime d) {
-    const meses = [
-      'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
-      'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
-    ];
-    return '${d.day} de ${meses[d.month - 1]} de ${d.year}';
-  }
-
-  Future<void> _seleccionarFechaCompra() async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _fechaCompra,
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2035),
-    );
-    if (picked != null) {
-      setState(() => _fechaCompra = picked);
+  PurchaseArticleDraft _draft(PantryProductPreview p) =>
+      PurchaseArticleDraft.fromProduct(p);
+  Future<void> _load() async {
+    try {
+      if (widget.useShoppingList) await _cart?.cargarDesdeBD();
+      final products = await _productoDao.obtenerConStock();
+      final stores = await _tiendaDao.obtenerTodas();
+      if (!mounted) return;
+      final catalog = products.map((p) => p.toPreview()).toList();
+      final byId = {for (final p in products) p.id: p.toPreview()};
+      final arguments = ModalRoute.of(context)?.settings.arguments;
+      final initial =
+          widget.initialItems ??
+          (arguments is List<ShoppingListItemPreview> ? arguments : null) ??
+          (widget.useShoppingList ? _cart?.current.items : null) ??
+          [];
+      final entries = <String, PurchaseArticleDraft>{};
+      for (final item in initial) {
+        final p = byId[item.product.id];
+        if (p != null) {
+          entries[item.key] = item.copyWith(product: p);
+        }
+      }
+      final productId = widget.productoId ?? widget.product?.id;
+      if (entries.isEmpty && productId != null && byId[productId] != null) {
+        final item = _draft(widget.product ?? byId[productId]!);
+        entries[item.key] = item;
+      }
+      setState(() {
+        _catalog = catalog;
+        _stores = stores;
+        _items = entries.values.toList();
+        _loading = false;
+        _error = null;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = 'No se pudieron cargar los productos y las tiendas.';
+        });
+      }
     }
   }
 
-  Future<void> _seleccionarFechaCaducidad() async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _fechaCaducidad,
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2035),
-    );
-    if (picked != null) {
-      setState(() => _fechaCaducidad = picked);
-    }
-  }
-
-  Future<void> _guardarCompra(PantryProductPreview product) async {
-    if (_tiendaSeleccionada == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Por favor selecciona una tienda para registrar la compra'),
-          backgroundColor: PantryColors.red,
-        ),
-      );
+  void _onCartChanged() {
+    if (!mounted ||
+        _loading ||
+        _saving ||
+        _pendingDraftWrites > 0 ||
+        !widget.useShoppingList ||
+        _cart == null) {
       return;
     }
+    setState(() => _items = _cart!.current.items.toList());
+  }
 
-    setState(() => _guardando = true);
+  Future<void> _updateDraft(PurchaseArticleDraft item) {
+    if (!mounted) return Future.value();
+    setState(
+      () => _items = _items.map((i) => i.key == item.key ? item : i).toList(),
+    );
+    if (!widget.useShoppingList || _cart == null) return Future.value();
+    _pendingDraftWrites++;
+    _draftWrites = _draftWrites
+        .then((_) => _cart!.setItem(item))
+        .catchError((Object error) {
+          if (mounted) {
+            _message('No se pudieron guardar los cambios del artículo.');
+          }
+        })
+        .whenComplete(() => _pendingDraftWrites--);
+    return _draftWrites;
+  }
 
+  Future<void> _changeCount(PurchaseArticleDraft item, int delta) async {
+    final next = item.packaging.esEnvase
+        ? item.copyWith(packageCount: item.packageCount + delta)
+        : item.copyWith(quantity: item.quantity + delta);
+    if (next.packageCount < 1 ||
+        next.packageCount > 999999 ||
+        !cantidadValida(next.quantity)) {
+      return;
+    }
+    await _updateDraft(next);
+  }
+
+  Future<void> _selectProducts() async {
+    final selected = await showModalBottomSheet<List<PantryProductPreview>>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => PurchaseProductSelector(
+        products: _catalog,
+        selectedKeys: _items.map((i) => i.key).toSet(),
+      ),
+    );
+    if (selected == null || !mounted) return;
+    final previous = {for (final i in _items) i.key: i};
+    if (widget.useShoppingList && _cart != null) {
+      final selectedKeys = selected.map((p) => _draft(p).key).toSet();
+      for (final old in _cart!.current.items.toList()) {
+        if (!selectedKeys.contains(old.key)) {
+          await _cart!.removeItem(old);
+        }
+      }
+      for (final p in selected) {
+        if (!_cart!.current.items.any((i) => i.key == _draft(p).key)) {
+          await _cart!.addProduct(p);
+        }
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _catalog = {
+        for (final p in [..._catalog, ...selected]) _draft(p).key: p,
+      }.values.toList();
+      _items = selected
+          .map(
+            (p) => previous[_draft(p).key]?.copyWith(product: p) ?? _draft(p),
+          )
+          .toList();
+    });
+  }
+
+  Future<void> _remove(PurchaseArticleDraft item) async {
+    if (widget.useShoppingList && _cart != null) {
+      await _cart!.removeItem(item);
+    }
+    if (mounted) {
+      setState(() => _items.removeWhere((i) => i.key == item.key));
+    }
+  }
+
+  Future<void> _edit(PurchaseArticleDraft item) async {
+    final edited = await showModalBottomSheet<PurchaseArticleDraft>(
+      context: context,
+      useSafeArea: true,
+      isScrollControlled: true,
+      builder: (_) => PurchaseArticleEditor(
+        item: item,
+        purchaseDate: _purchaseDate,
+        onChanged: _updateDraft,
+      ),
+    );
+    if (!mounted) return;
+    if (edited != null) await _updateDraft(edited);
+    await _draftWrites;
     try {
-      final double precioParsed = double.tryParse(_precioController.text.trim()) ?? _precioUnitario;
-
-      // Obtener o asegurar productoId 
-      int pId = widget.productoId ?? product.id ?? 1;
-
-      // Verificar si el producto existe, si no, crearlo con datos base
-      final prodEnBD = await _productoDao.obtenerPorId(pId);
-      if (prodEnBD == null) {
-        pId = await _productoDao.insertar(
-          Producto(
-            nombre: product.name,
-            unidadMedida: product.unit,
-            stockMinimo: product.minimumStock.toDouble(),
-            categoriaId: 1,
-            ultimaTiendaId: _tiendaSeleccionada!.id,
-          ),
-        );
+      final products = await _productoDao.obtenerConStock();
+      if (!mounted) return;
+      final byId = {for (final p in products) p.id: p.toPreview()};
+      if (!mounted) return;
+      setState(() {
+        _catalog = byId.values.toList();
+        _items = _items.map((i) {
+          final next = i;
+          return next.copyWith(product: byId[next.product.id] ?? next.product);
+        }).toList();
+      });
+    } catch (_) {
+      if (mounted) {
+        _message('No se pudo actualizar el artículo. Inténtalo de nuevo.');
       }
+    }
+  }
 
-      final fechaCompraIso = _formatearFechaIso(_fechaCompra);
-      final fechaCaducidadIso = _formatearFechaIso(_fechaCaducidad);
+  Future<void> _addStore() async {
+    final ids = _stores.map((s) => s.id).toSet();
+    final result = await Navigator.of(context)
+        .push<bool>(MaterialPageRoute(builder: (_) => const StoreFormScreen()));
+    if (result != true || !mounted) return;
+    try {
+      final stores = await _tiendaDao.obtenerTodas();
+      if (mounted) {
+        setState(() {
+          _stores = stores;
+          _storeId =
+              stores.where((s) => !ids.contains(s.id)).firstOrNull?.id ??
+              _storeId;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        _message('No se pudo cargar la tienda. Vuelve a abrir la compra.');
+      }
+    }
+  }
 
-      await _compraDao.registrarCompra(
-        productoId: pId,
-        tiendaId: _tiendaSeleccionada!.id!,
-        cantidad: _cantidad.toDouble(),
-        precioUnitario: precioParsed,
-        fechaCompra: fechaCompraIso,
-        fechaCaducidad: fechaCaducidadIso,
+  Future<void> _changePurchaseDate() async {
+    final now = DateTime.now();
+    final date = await showDatePicker(
+      context: context,
+      initialDate: _purchaseDate,
+      firstDate: DateTime(1900),
+      lastDate: DateTime(now.year, now.month, now.day),
+    );
+    if (mounted && date != null) setState(() => _purchaseDate = date);
+  }
+
+  void _message(String text) =>
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  Future<void> _save() async {
+    if (_saving || _items.isEmpty) return;
+    if (_storeId == null) {
+      _message('Selecciona la tienda o supermercado.');
+      return;
+    }
+    for (var index = 0; index < _items.length; index++) {
+      final item = _items[index];
+      if (item.priceCents == null ||
+          item.expiryDate == null ||
+          item.expiryDate!.isBefore(_purchaseDate)) {
+        _message('Completa precio y caducidad de ${item.product.name}.');
+        await _edit(item);
+        if (!mounted) return;
+        final updated = _items.where((i) => i.key == item.key).firstOrNull;
+        if (updated == null ||
+            updated.priceCents == null ||
+            updated.expiryDate == null ||
+            updated.expiryDate!.isBefore(_purchaseDate)) {
+          return;
+        }
+      }
+    }
+    setState(() => _saving = true);
+    try {
+      await _draftWrites;
+      final saved = await _compraDao.registrarCompraCompleta(
+        tiendaId: _storeId!,
+        fechaCompra: _purchaseDate.toIso8601String().substring(0, 10),
+        articulos: _items.map((i) => i.toModel()).toList(),
+        quitarDelCarrito: widget.useShoppingList,
       );
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Compra guardada: $_cantidad ${product.unit} en ${_tiendaSeleccionada!.nombre} (Lote generado con criterio FEFO)',
-            ),
-            backgroundColor: PantryColors.green,
-          ),
-        );
+      await _cart?.cargarDesdeBD();
+      if (!mounted) return;
+      _message(
+        'Compra guardada · Total: \$${formatearImporte(saved.totalCentavos)}',
+      );
+      if (!widget.stayAfterSave && Navigator.of(context).canPop()) {
         Navigator.of(context).pop(true);
+      } else {
+        setState(() {
+          _items = widget.useShoppingList
+              ? (_cart?.current.items ?? []).map((i) => i.copyWith()).toList()
+              : [];
+          _storeId = null;
+        });
       }
-    } catch (e) {
+    } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error al guardar compra: $e'),
-            backgroundColor: PantryColors.red,
-          ),
+        _message(
+          'No se guardó la compra. Revisa los artículos y vuelve a intentarlo.',
         );
       }
     } finally {
-      if (mounted) setState(() => _guardando = false);
+      if (mounted) setState(() => _saving = false);
     }
   }
 
+  String _dateLabel(DateTime d) =>
+      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+
   @override
   Widget build(BuildContext context) {
-    final product = widget.product ??
-        const PantryProductPreview(
-          name: 'Producto',
-          category: 'General',
-          status: PantryPreviewStatus.healthy,
-          note: '',
-          quantity: '1 pza',
-          thumbnail: ProductThumbnailKind.placeholder,
-        );
-
-    final double totalCompra = _cantidad * _precioUnitario;
-
-    return ColoredBox(
-      color: PantryColors.greenLight,
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 640),
-          child: Scaffold(
-            bottomNavigationBar: const AppBottomNavigation(selectedIndex: 3),
-            body: SafeArea(
-              child: CustomScrollView(
-                slivers: [
-                  SliverAppBar(
-                    toolbarHeight: 68,
-                    leadingWidth: 40,
-                    pinned: true,
-                    titleSpacing: 0,
-                    title: const AppSectionHeading(
-                      section: AppSection.purchase,
+    final knownPrices = _items.every((i) => i.priceCents != null);
+    final total = _items.fold<int>(0, (sum, i) => sum + i.subtotalCents);
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 640),
+        child: Scaffold(
+          bottomNavigationBar: const AppBottomNavigation(selectedIndex: 3),
+          body: SafeArea(
+            child: CustomScrollView(
+              slivers: [
+                const SliverAppBar(
+                  pinned: true,
+                  toolbarHeight: 68,
+                  title: AppSectionHeading(section: AppSection.purchase),
+                ),
+                if (widget.useShoppingList)
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+                    sliver: SliverToBoxAdapter(
+                      child: OutlinedButton.icon(
+                        onPressed: _saving
+                            ? null
+                            : () =>
+                                  Navigator.of(context)
+                                      .pushNamed('/purchase-history'),
+                        icon: const Icon(Icons.history_rounded),
+                        label: const Text('Historial de compras'),
+                      ),
                     ),
-                    actions: [
-                      IconButton(
-                        onPressed: () {},
-                        tooltip: 'Escanear código',
-                        icon: const Icon(
-                          Icons.qr_code_scanner_rounded,
-                          size: 20,
+                  ),
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+                  sliver: SliverList.list(
+                    children: [
+                      if (_loading) const LinearProgressIndicator(),
+                      if (_error != null) ...[
+                        Text(_error!),
+                        TextButton(
+                          onPressed: () {
+                            setState(() => _loading = true);
+                            _load();
+                          },
+                          child: const Text('Reintentar'),
+                        ),
+                      ],
+                      const Text(
+                        'Artículos de la compra',
+                        style: TextStyle(
+                          fontSize: 21,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
-                    ],
-                  ),
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-                    sliver: SliverList.list(
-                      children: [
-                        const _PurchasePanel(
-                          color: PantryColors.greenLight,
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Icon(
-                                Icons.verified_outlined,
-                                size: 16,
-                                color: PantryColors.green,
-                              ),
-                              SizedBox(width: 8),
-                              Expanded(
-                                child: Text.rich(
-                                  TextSpan(
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      color: PantryColors.muted,
-                                      height: 1.45,
-                                    ),
-                                    children: [
-                                      TextSpan(
-                                        text: 'Registro con trazabilidad obligatoria.\n',
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.w700,
-                                          color: PantryColors.green,
-                                        ),
-                                      ),
-                                      TextSpan(
-                                        text:
-                                            'Genera un lote activo con vencimiento FEFO y registra el precio histórico por tienda.',
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Selecciona productos de tu alacena y toca un artículo para editar su cantidad, precio y caducidad.',
+                        style: TextStyle(
+                          color: PantryColors.muted,
+                          height: 1.4,
                         ),
-                        const SizedBox(height: 14),
-                        _PurchasePanel(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const _FieldLabel('Artículo de la alacena *'),
-                              const SizedBox(height: 10),
-                              _FieldSurface(
-                                child: Row(
-                                  children: [
-                                    ProductThumbnail(
-                                      kind: product.thumbnail,
-                                      imagePath: product.imagePath,
-                                      size: 40,
-                                    ),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            product.name,
-                                            style: const TextStyle(
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w700,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 4),
-                                          Text(
-                                            '${product.category} · Unidad: ${product.unit}',
-                                            style: const TextStyle(
-                                              fontSize: 10,
-                                              color: PantryColors.green,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
+                      ),
+                      const SizedBox(height: 16),
+                      OutlinedButton.icon(
+                        onPressed: _loading || _saving || _error != null
+                            ? null
+                            : _selectProducts,
+                        icon: const Icon(Icons.add),
+                        label: const Text('Agregar productos'),
+                      ),
+                      const SizedBox(height: 12),
+                      if (_items.isEmpty && !_loading && _error == null)
+                        Container(
+                          padding: const EdgeInsets.all(24),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(22),
                           ),
-                        ),
-                        const SizedBox(height: 14),
-                        _PurchasePanel(
                           child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const _FieldLabel('Tienda / Supermercado *'),
-                              const SizedBox(height: 10),
-                              if (_cargando)
-                                const LinearProgressIndicator()
-                              else if (_tiendas.isEmpty)
-                                const Text(
-                                  'No hay tiendas registradas. Ve a la sección Tiendas para agregar una.',
-                                  style: TextStyle(fontSize: 11, color: PantryColors.red),
-                                )
-                              else
-                                DropdownButtonFormField<Tienda>(
-                                  initialValue: _tiendaSeleccionada,
-                                  isExpanded: true,
-                                  decoration: _inputDecoration(
-                                    prefixIcon: Icons.storefront_outlined,
-                                  ),
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    color: PantryColors.ink,
-                                  ),
-                                  items: _tiendas
-                                      .map(
-                                        (store) => DropdownMenuItem(
-                                          value: store,
-                                          child: Text(
-                                            '${store.nombre} (${store.tipoTiendaNombre ?? 'Tienda'})',
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ),
-                                      )
-                                      .toList(),
-                                  onChanged: (val) {
-                                    if (val != null) {
-                                      setState(() => _tiendaSeleccionada = val);
-                                    }
-                                  },
-                                ),
-                              const SizedBox(height: 5),
-                              Text(
-                                _tiendaSeleccionada?.ubicacion ?? 'Ubicación de compra',
-                                style: const TextStyle(
-                                  fontSize: 10,
+                              IconButton.filled(
+                                onPressed: _saving ? null : _selectProducts,
+                                tooltip: 'Agregar productos existentes',
+                                icon: const Icon(Icons.add, size: 32),
+                              ),
+                              const SizedBox(height: 12),
+                              const Text(
+                                'Agrega productos a esta compra',
+                                style: TextStyle(fontWeight: FontWeight.w700),
+                              ),
+                              const SizedBox(height: 6),
+                              const Text(
+                                'Selecciona los productos que ya registraste en Inicio.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 12,
                                   color: PantryColors.muted,
                                 ),
                               ),
                             ],
                           ),
                         ),
-                        const SizedBox(height: 14),
-                        LayoutBuilder(
-                          builder: (context, constraints) {
-                            final quantity = _PurchasePanel(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const _FieldLabel('Cantidad *'),
-                                  const SizedBox(height: 10),
-                                  _FieldSurface(
-                                    child: Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        _QuantityButton(
-                                          icon: Icons.remove_rounded,
-                                          tooltip: 'Disminuir cantidad',
-                                          onPressed: () {
-                                            if (_cantidad > 1) {
-                                              setState(() => _cantidad--);
-                                            }
-                                          },
-                                        ),
-                                        Text(
-                                          '$_cantidad',
-                                          style: const TextStyle(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                        ),
-                                        _QuantityButton(
-                                          icon: Icons.add_rounded,
-                                          tooltip: 'Aumentar cantidad',
-                                          onPressed: () => setState(() => _cantidad++),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    'Unidad: ${product.unit}',
-                                    style: const TextStyle(
-                                      fontSize: 10,
-                                      color: PantryColors.muted,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                            final price = _PurchasePanel(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const _FieldLabel('Precio unitario *'),
-                                  const SizedBox(height: 10),
-                                  TextFormField(
-                                    controller: _precioController,
-                                    keyboardType:
-                                        const TextInputType.numberWithOptions(
-                                          decimal: true,
-                                        ),
-                                    onChanged: (val) {
-                                      final parsed = double.tryParse(val);
-                                      if (parsed != null) {
-                                        setState(() => _precioUnitario = parsed);
-                                      }
-                                    },
-                                    style: const TextStyle(
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                    decoration: _inputDecoration().copyWith(
-                                      prefixText: '\$ ',
-                                      suffixText: 'MXN',
-                                      suffixStyle: const TextStyle(
-                                        fontSize: 9,
-                                        color: PantryColors.muted,
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    'Total: \$${totalCompra.toStringAsFixed(2)} MXN',
-                                    style: const TextStyle(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.w600,
-                                      color: PantryColors.green,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                            if (constraints.maxWidth < 350) {
-                              return Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  quantity,
-                                  const SizedBox(height: 14),
-                                  price,
-                                ],
-                              );
-                            }
-                            return Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Expanded(child: quantity),
-                                const SizedBox(width: 12),
-                                Expanded(child: price),
-                              ],
-                            );
-                          },
-                        ),
-                        const SizedBox(height: 14),
-                        _PurchasePanel(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const _FieldLabel('Fecha de compra *'),
-                              const SizedBox(height: 10),
-                              InkWell(
-                                onTap: _seleccionarFechaCompra,
-                                child: IgnorePointer(
-                                  child: TextFormField(
-                                    readOnly: true,
-                                    controller: TextEditingController(
-                                      text: _formatearFechaLegible(_fechaCompra),
-                                    ),
-                                    style: const TextStyle(fontSize: 12),
-                                    decoration: _inputDecoration(
-                                      prefixIcon: Icons.calendar_today_outlined,
-                                    ).copyWith(
-                                      suffixIcon: const Icon(
-                                        Icons.event_outlined,
-                                        size: 18,
-                                        color: PantryColors.muted,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 18),
-                              const _FieldLabel('Fecha de caducidad (lote a generar) *'),
-                              const SizedBox(height: 10),
-                              InkWell(
-                                onTap: _seleccionarFechaCaducidad,
-                                child: _FieldSurface(
-                                  child: Row(
-                                    children: [
-                                      const Icon(
-                                        Icons.hourglass_bottom_rounded,
-                                        color: PantryColors.green,
-                                        size: 20,
-                                      ),
-                                      const SizedBox(width: 10),
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              _formatearFechaLegible(_fechaCaducidad),
-                                              style: const TextStyle(
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                            const SizedBox(height: 3),
-                                            const Text(
-                                              'Toca para cambiar la caducidad del lote',
-                                              style: TextStyle(
-                                                fontSize: 10,
-                                                color: PantryColors.muted,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      const Icon(
-                                        Icons.event_outlined,
-                                        size: 18,
-                                        color: PantryColors.muted,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ],
+                      for (final item in _items)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: PurchaseArticleCard(
+                            key: ValueKey('purchase-item-${item.key}'),
+                            item: item,
+                            onTap: _saving ? null : () => _edit(item),
+                            onRemove: _saving ? null : () => _remove(item),
+                            onIncrease: _saving
+                                ? null
+                                : () => _changeCount(item, 1),
+                            onDecrease:
+                                _saving ||
+                                    (item.packaging.esEnvase
+                                        ? item.packageCount <= 1
+                                        : item.quantity <= 1)
+                                ? null
+                                : () => _changeCount(item, -1),
                           ),
                         ),
-                        const SizedBox(height: 22),
-                        FilledButton.icon(
-                          onPressed: _guardando ? null : () => _guardarCompra(product),
-                          icon: _guardando
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white,
-                                  ),
-                                )
-                              : const Icon(
-                                  Icons.shopping_bag_outlined,
-                                  size: 18,
-                                ),
-                          label: Text(
-                            _guardando ? 'Guardando en SQLite…' : 'Guardar compra',
-                            style: const TextStyle(fontSize: 13),
-                          ),
-                          style: FilledButton.styleFrom(
-                            minimumSize: const Size.fromHeight(48),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
+                      const SizedBox(height: 10),
+                      const SizedBox(height: 20),
+                      _panel(
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Tienda / Supermercado',
+                              style: TextStyle(fontWeight: FontWeight.w700),
                             ),
-                          ),
+                            const SizedBox(height: 12),
+                            if (_stores.isNotEmpty)
+                              DropdownButtonFormField<int>(
+                                key: ValueKey('purchase-store-$_storeId'),
+                                initialValue: _storeId,
+                                isExpanded: true,
+                                hint: const Text('Selecciona una tienda'),
+                                decoration: const InputDecoration(
+                                  prefixIcon: Icon(Icons.storefront_outlined),
+                                ),
+                                items: _stores
+                                    .map(
+                                      (s) => DropdownMenuItem(
+                                        value: s.id,
+                                        child: Text(s.nombre),
+                                      ),
+                                    )
+                                    .toList(),
+                                onChanged: _saving
+                                    ? null
+                                    : (id) => setState(() => _storeId = id),
+                              ),
+                            if (_stores.isEmpty && !_loading)
+                              const Text(
+                                'Agrega una tienda para registrar la compra.',
+                              ),
+                            TextButton.icon(
+                              onPressed: _saving ? null : _addStore,
+                              icon: const Icon(Icons.add),
+                              label: const Text('Agregar tienda'),
+                            ),
+                            ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: const Icon(
+                                Icons.calendar_today_outlined,
+                              ),
+                              title: const Text('Fecha de compra'),
+                              subtitle: Text(_dateLabel(_purchaseDate)),
+                              trailing: const Icon(Icons.edit_outlined),
+                              onTap: _saving ? null : _changePurchaseDate,
+                            ),
+                          ],
                         ),
-                        const SizedBox(height: 8),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(height: 20),
+                      _panel(
+                        Row(
+                          children: [
+                            const Expanded(
+                              child: Text(
+                                'Total',
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                            Flexible(
+                              child: Text(
+                                knownPrices
+                                    ? '\$${formatearImporte(total)}'
+                                    : 'Por completar',
+                                style: const TextStyle(
+                                  fontSize: 23,
+                                  fontWeight: FontWeight.w700,
+                                  color: PantryColors.green,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      FilledButton.icon(
+                        onPressed:
+                            _loading ||
+                                _saving ||
+                                _items.isEmpty ||
+                                _error != null
+                            ? null
+                            : _save,
+                        icon: _saving
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.shopping_bag_outlined),
+                        label: Text(_saving ? 'Guardando…' : 'Guardar compra'),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size.fromHeight(48),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ),
@@ -579,91 +581,9 @@ class _RegisterPurchaseScreenState extends State<RegisterPurchaseScreen> {
     );
   }
 
-  InputDecoration _inputDecoration({IconData? prefixIcon}) => InputDecoration(
-        prefixIcon: prefixIcon != null
-            ? Icon(prefixIcon, size: 16, color: PantryColors.muted)
-            : null,
-        filled: true,
-        fillColor: Colors.white,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: PantryColors.border),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: PantryColors.border),
-        ),
-      );
-}
-
-class _PurchasePanel extends StatelessWidget {
-  const _PurchasePanel({required this.child, this.color});
-  final Widget child;
-  final Color? color;
-
-  @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: color ?? Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: PantryColors.border),
-        ),
-        child: child,
-      );
-}
-
-class _FieldSurface extends StatelessWidget {
-  const _FieldSurface({required this.child});
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: PantryColors.background,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: PantryColors.border),
-        ),
-        child: child,
-      );
-}
-
-class _FieldLabel extends StatelessWidget {
-  const _FieldLabel(this.text);
-  final String text;
-
-  @override
-  Widget build(BuildContext context) => Text(
-        text,
-        style: const TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-          color: PantryColors.ink,
-        ),
-      );
-}
-
-class _QuantityButton extends StatelessWidget {
-  const _QuantityButton({
-    required this.icon,
-    required this.tooltip,
-    this.onPressed,
-  });
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback? onPressed;
-
-  @override
-  Widget build(BuildContext context) => IconButton(
-        onPressed: onPressed,
-        tooltip: tooltip,
-        style: IconButton.styleFrom(
-          backgroundColor: Colors.white,
-          side: const BorderSide(color: PantryColors.border),
-          minimumSize: const Size(36, 36),
-        ),
-        icon: Icon(icon, size: 16, color: PantryColors.ink),
-      );
+  Widget _panel(Widget child) => Material(
+    color: Colors.white,
+    borderRadius: BorderRadius.circular(20),
+    child: Padding(padding: const EdgeInsets.all(16), child: child),
+  );
 }

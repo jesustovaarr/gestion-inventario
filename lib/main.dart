@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:gestion_inventario/screens/pantalla_confirmar_compra.dart';
 
 import 'components/tema_alacena.dart';
 import 'screens/pantalla_inicio.dart';
@@ -83,6 +84,7 @@ class _AlacenaPreviewAppState extends State<AlacenaPreviewApp> {
           '/cart': (_) => const CartScreen(),
           '/purchase-history': (_) => const PurchaseHistoryScreen(),
           '/new-article': (_) => const NewArticleScreen(),
+          '/confirm-purchase': (_) => const ConfirmPurchaseScreen(),
         },
         home: Builder(
           builder: (context) {

@@ -1,5 +1,7 @@
 import 'package:sqflite/sqflite.dart';
+
 import '../../models/carrito_model.dart';
+import '../../utils/cantidades.dart';
 import '../inventario_db.dart';
 
 class CarritoDao {
@@ -9,64 +11,52 @@ class CarritoDao {
 
   Future<Database> get _db async => _database ?? await InventarioDB().database;
 
-  // Agrega un producto a la lista de compras o incrementa su cantidad si ya existe
-  Future<int> agregarOIncrementar(int productoId, {double cantidad = 1.0}) async {
+  Future<void> guardarArticulo(CarritoItem item) async {
+    if (!cantidadValida(item.cantidadAComprar) ||
+        !cantidadValida(item.contenidoEnvase) ||
+        item.numeroEnvases < 1 ||
+        item.numeroEnvases > 999999 ||
+        (item.presentacion.esEnvase &&
+            normalizarCantidad(item.numeroEnvases * item.contenidoEnvase) !=
+                item.cantidadAComprar)) {
+      throw ArgumentError('Cantidad inválida');
+    }
     final db = await _db;
-    final itemExistente = await db.query(
-      'Carrito',
-      where: 'producto_id = ?',
-      whereArgs: [productoId],
-    );
-
-    if (itemExistente.isNotEmpty) {
-      final actual = (itemExistente.first['cantidad_a_comprar'] as num).toDouble();
-      return await db.update(
+    await db.transaction((txn) async {
+      final existentes = await txn.query(
         'Carrito',
-        {'cantidad_a_comprar': actual + cantidad},
         where: 'producto_id = ?',
-        whereArgs: [productoId],
+        whereArgs: [item.productoId],
       );
-    } else {
-      return await db.insert('Carrito', {
-        'producto_id': productoId,
-        'cantidad_a_comprar': cantidad,
-      });
-    }
+      final existente = existentes.isEmpty
+          ? null
+          : CarritoItem.fromMap(existentes.first);
+      if (existente == null) {
+        await txn.insert('Carrito', item.toMap());
+      } else {
+        await txn.update(
+          'Carrito',
+          item.toMap(),
+          where: 'id = ?',
+          whereArgs: [existente.id],
+        );
+      }
+    });
   }
 
-  // Actualiza la cantidad de un artículo. Si la cantidad es <= 0, lo elimina
-  Future<int> actualizarCantidad(int productoId, double nuevaCantidad) async {
+  Future<int> eliminarArticulo(CarritoItem item) async {
     final db = await _db;
-    if (nuevaCantidad <= 0) {
-      return await eliminar(productoId);
-    }
-    return await db.update(
+    return db.delete(
       'Carrito',
-      {'cantidad_a_comprar': nuevaCantidad},
       where: 'producto_id = ?',
-      whereArgs: [productoId],
+      whereArgs: [item.productoId],
     );
-  }
-
-  Future<int> eliminar(int productoId) async {
-    final db = await _db;
-    return await db.delete('Carrito', where: 'producto_id = ?', whereArgs: [productoId]);
   }
 
   // Vacía la lista de compras
   Future<int> vaciar() async {
     final db = await _db;
     return await db.delete('Carrito');
-  }
-
-  // Conteo de unidades totales en el carrito para el badge
-  Future<int> contar() async {
-    final db = await _db;
-    final res = await db.rawQuery('SELECT COALESCE(SUM(cantidad_a_comprar), 0) as total FROM Carrito');
-    if (res.isNotEmpty && res.first['total'] != null) {
-      return (res.first['total'] as num).round();
-    }
-    return 0;
   }
 
   // Obtiene los elementos del carrito con detalles del producto y stock
