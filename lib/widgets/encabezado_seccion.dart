@@ -14,6 +14,7 @@ enum AppSection {
   newStore('Nueva tienda', Icons.add_business_outlined),
   editStore('Editar tienda', Icons.edit_location_alt_outlined),
   purchase('Registrar compra', Icons.receipt_long_outlined),
+  purchaseHistory('Historial de compras', Icons.history_rounded),
   dayAlerts('Productos del día', Icons.event_note_outlined);
 
   const AppSection(this.title, this.icon);

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'components/tema_alacena.dart';
 import 'screens/pantalla_inicio.dart';
 import 'screens/pantalla_carrito.dart';
+import 'screens/pantalla_historial_compras.dart';
 import 'screens/pantalla_tiendas.dart';
 import 'screens/pantalla_nuevo_articulo.dart';
 import 'screens/pantalla_calendario.dart';
@@ -80,6 +81,7 @@ class _AlacenaPreviewAppState extends State<AlacenaPreviewApp> {
           '/calendar': (_) => const CalendarScreen(),
           '/stores': (_) => const StoresScreen(),
           '/cart': (_) => const CartScreen(),
+          '/purchase-history': (_) => const PurchaseHistoryScreen(),
           '/new-article': (_) => const NewArticleScreen(),
         },
         home: Builder(
